@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Polydispute V3</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>Polydispute Edge Dashboard</h1>
+            <p>Tracking the UMA DVM / Polymarket Spread</p>
+        </header>
+
+        <main>
+            <section id="arb-signals">
+                <h2>Live Arbitrage Signals</h2>
+                <div class="table-container">
+                    <table id="signals-table">
+                        <thead>
+                            <tr>
+                                <th>Market</th>
+                                <th>PM Price (YES)</th>
+                                <th>Calculated Tau</th>
+                                <th>Arb Spread</th>
+                                <th>Anchor Active</th>
+                            </tr>
+                        </thead>
+                        <tbody id="signals-body">
+                            <!-- Populated by app.js -->
+                            <tr>
+                                <td colspan="5" class="loading">Loading data...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script src="app.js"></script>
+</body>
+
+</html>
