@@ -1,0 +1,129 @@
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════════
+   POLYDISPUTE — Phosphor Terminal Design System
+   Based on DATA_APP_TEMPLATE_1/STYLE_GUIDE.md
+   ═══════════════════════════════════════════════════════════════ */
+
+@theme {
+  --color-background: hsl(135 15% 12%);
+  --color-foreground: hsl(135 60% 55%);
+
+  --color-card: hsl(135 15% 12%);
+  --color-card-foreground: hsl(135 60% 55%);
+
+  --color-primary: hsl(135 60% 55%);
+  --color-primary-foreground: hsl(135 15% 12%);
+
+  --color-secondary: hsl(135 20% 20%);
+  --color-secondary-foreground: hsl(135 60% 55%);
+
+  --color-muted: hsl(135 20% 20%);
+  --color-muted-foreground: hsl(135 40% 45%);
+
+  --color-accent: hsl(50 90% 70%);
+  --color-accent-foreground: hsl(135 15% 12%);
+
+  --color-destructive: hsl(0 84% 60%);
+  --color-destructive-foreground: hsl(210 40% 98%);
+
+  --color-border: hsl(135 40% 30%);
+  --color-input: hsl(135 40% 30%);
+  --color-ring: hsl(135 60% 55%);
+
+  /* Semantic colors for arb signals */
+  --color-edge-high: hsl(135 70% 50%);
+  --color-edge-mid: hsl(50 90% 60%);
+  --color-edge-low: hsl(135 30% 40%);
+  --color-danger: hsl(0 84% 60%);
+
+  --radius-sm: 0rem;
+  --radius-md: 0rem;
+  --radius-lg: 0rem;
+  --radius-xl: 0rem;
+
+  --font-mono: 'Courier New', Courier, monospace;
+  --font-serif: 'Times New Roman', Times, serif;
+}
+
+/* ─── Base ─────────────────────────────────────────────────── */
+
+* {
+  border-color: var(--color-border);
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  margin: 0;
+  padding: 0;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-serif);
+  text-transform: lowercase;
+  letter-spacing: 0.05em;
+}
+
+/* ─── Scrollbar (phosphor aesthetic) ──────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-foreground);
+}
+
+/* ─── Utilities ───────────────────────────────────────────── */
+
+.scanline {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.05) 2px,
+    rgba(0, 0, 0, 0.05) 4px
+  );
+}
+
+.glow-text {
+  text-shadow: 0 0 8px hsla(135, 60%, 55%, 0.4);
+}
+
+/* Pulse animation for active status indicators */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Fade-in for page load */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+  animation: fade-in 0.4s ease-out;
+}

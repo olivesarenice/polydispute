@@ -16,6 +16,7 @@ dependencies = [
     "pydantic>=2.12.5",
     "python-dotenv>=1.2.2",
     "requests>=2.33.1",
+    "sentry-sdk[fastapi]>=2.0.0",
     "tqdm>=4.67.3",
     "uvicorn>=0.48.0",
     "web3>=7.15.0",

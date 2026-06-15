@@ -1,0 +1,15 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./frontend:/app/frontend
+      - ./backend:/app/backend
+      - ./pipeline/data:/app/pipeline/data
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+      - SENTRY_DSN=${SENTRY_DSN:-}
+    restart: unless-stopped
