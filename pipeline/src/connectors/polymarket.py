@@ -28,6 +28,9 @@ class PolymarketMarket(BaseModel):
     custom_liveness: Optional[float] = None
     neg_risk: Optional[bool] = None
     uma_question_id: Optional[str] = Field(default=None, alias="questionID")
+    # CLOB token IDs — JSON string '["<yes_token>","<no_token>"]'
+    # Required to query clob.polymarket.com/prices-history (takes asset/token ID, not market ID)
+    clob_token_ids: Optional[str] = Field(default=None, alias="clobTokenIds")
 
 class PolymarketEvent(BaseModel):
     model_config = ConfigDict(extra='ignore', alias_generator=to_camel, populate_by_name=True)
@@ -51,7 +54,6 @@ class PolymarketClient:
     """
     def __init__(self, base_url: str = "https://gamma-api.polymarket.com"):
         self.base_url = base_url.rstrip("/")
-        # Gamma API public endpoints do not strictly require authentication keys
         self.session = requests.Session()
 
     def _get(self, endpoint: str, params: dict = None) -> Any:
@@ -176,3 +178,55 @@ class PolymarketClient:
             f"{not_found} not found — out of {len(market_ids)} requested."
         )
         return found
+
+
+class ClobClient:
+    """
+    Client for the Polymarket CLOB API (clob.polymarket.com).
+    Used for price history — takes CLOB token IDs (not market IDs).
+    Rate limit: same /markets endpoint family, 300 req/10s.
+    """
+    def __init__(self, base_url: str = "https://clob.polymarket.com"):
+        self.base_url = base_url.rstrip("/")
+        self.session = requests.Session()
+
+    def _get(self, endpoint: str, params: dict = None) -> Any:
+        url = f"{self.base_url}/{endpoint}"
+        logger.debug(f"GET {url} params={params}")
+        try:
+            response = self.session.get(url, params=params, timeout=15)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            logger.error(f"CLOB API request failed on {endpoint}: {e}")
+            raise
+
+    def get_prices_history(
+        self,
+        token_id: str,
+        interval: str = "max",
+        fidelity: int = 60,
+        start_ts: int | None = None,
+        end_ts: int | None = None,
+    ) -> list[dict]:
+        """
+        Fetch price history for a single CLOB token (YES or NO side of a market).
+
+        Args:
+            token_id: The CLOB asset token ID (first element of clobTokenIds = YES).
+            interval:  max | all | 1m | 1w | 1d | 6h | 1h
+            fidelity:  Resolution in minutes (default 60 = hourly points).
+            start_ts:  Unix timestamp lower bound (inclusive).
+            end_ts:    Unix timestamp upper bound (inclusive).
+
+        Returns:
+            List of dicts: [{"t": unix_ts, "p": float}, ...]
+        """
+        params: dict = {"market": token_id, "interval": interval, "fidelity": fidelity}
+        if start_ts is not None:
+            params["startTs"] = start_ts
+        if end_ts is not None:
+            params["endTs"] = end_ts
+
+        data = self._get("prices-history", params=params)
+        return data.get("history", [])

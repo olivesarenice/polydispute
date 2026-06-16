@@ -54,6 +54,7 @@ TABLES = [
             "custom_liveness": "REAL",
             "neg_risk": "INTEGER",
             "uma_question_id": "TEXT",
+            "clob_token_ids": "TEXT",  # JSON string '["<yes_token>","<no_token>"]'
             **get_dw_columns(),
         },
         indices=[

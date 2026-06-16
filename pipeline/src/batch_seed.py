@@ -191,6 +191,50 @@ def backfill_missing_markets() -> None:
         load_json_to_table("raw_pm_markets", records)
         logger.success(f"Backfill complete: {len(records)}/{len(missing_ids)} markets loaded.")
 
+def backfill_clob_token_ids() -> None:
+    """
+    Populates clob_token_ids for all raw_pm_markets rows where it is NULL.
+    Uses parallel get_markets_by_ids() — 300 req/10s limit, 25 workers.
+    Required so that price history can be fetched via ClobClient without
+    an extra Gamma API round-trip per market.
+    """
+    conn = get_sqlite_conn()
+    rows = conn.execute(
+        "SELECT id FROM raw_pm_markets WHERE clob_token_ids IS NULL ORDER BY CAST(id AS INTEGER)"
+    ).fetchall()
+    conn.close()
+
+    missing_ids = [r[0] for r in rows]
+    if not missing_ids:
+        logger.info("backfill_clob_token_ids: all rows already have clob_token_ids.")
+        return
+
+    logger.info(f"Fetching clob_token_ids for {len(missing_ids)} markets in parallel...")
+    client = PolymarketClient()
+    markets = client.get_markets_by_ids(missing_ids)
+
+    # Build id -> clob_token_ids map from fetched markets
+    updates = [
+        (m.clob_token_ids, m.id)
+        for m in markets
+        if m.clob_token_ids is not None
+    ]
+
+    if not updates:
+        logger.warning("backfill_clob_token_ids: no clob_token_ids returned — API may have changed.")
+        return
+
+    conn = get_sqlite_conn()
+    conn.executemany(
+        "UPDATE raw_pm_markets SET clob_token_ids=? WHERE id=?",
+        updates,
+    )
+    conn.commit()
+    conn.close()
+    logger.success(
+        f"backfill_clob_token_ids: updated {len(updates)}/{len(missing_ids)} rows."
+    )
+
 
 def seed_discord_from_file(filepath: str) -> None:
     """
@@ -242,6 +286,10 @@ def main() -> int:
         help="Fetch all markets referenced in Discord threads but missing from raw_pm_markets"
     )
     parser.add_argument(
+        "--backfill-clob-tokens", action="store_true",
+        help="Populate clob_token_ids for all raw_pm_markets rows where it is NULL"
+    )
+    parser.add_argument(
         "--log-level",
         type=str,
         default="INFO",
@@ -269,6 +317,8 @@ def main() -> int:
     try:
         if args.backfill_markets:
             backfill_missing_markets()
+        elif args.backfill_clob_tokens:
+            backfill_clob_token_ids()
         elif args.client == "polymarket":
             if not args.t0 or not args.t1:
                 raise ValueError("--t0 and --t1 are required for polymarket client")
