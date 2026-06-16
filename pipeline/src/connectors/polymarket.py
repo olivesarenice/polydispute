@@ -12,11 +12,11 @@ class PolymarketMarket(BaseModel):
     condition_id: Optional[str] = None
     slug: str
     resolution_source: Optional[str] = None
-    end_date: str
-    start_date: str
-    description: str
-    outcomes: str
-    outcome_prices: str
+    end_date: Optional[str] = None
+    start_date: Optional[str] = None
+    description: Optional[str] = None
+    outcomes: Optional[str] = None
+    outcome_prices: Optional[str] = None
     volume_num: Optional[float] = None
     active: bool
     closed: bool
@@ -118,3 +118,61 @@ class PolymarketClient:
                 
         logger.info(f"Successfully synced {len(parsed_markets)} active Polymarket markets.")
         return parsed_markets
+
+    def get_market_by_id(self, market_id: str) -> PolymarketMarket | None:
+        """
+        Fetch a single market by its numeric ID via the single-resource endpoint.
+
+        Unlike GET /markets?id[]=..., this endpoint returns archived/old markets
+        that the bulk list endpoint silently omits.
+        Returns None if the market is not found or fails to parse.
+        """
+        try:
+            raw = self._get(f"markets/{market_id}")
+            return PolymarketMarket(**raw)
+        except Exception as e:
+            logger.warning(f"Failed to fetch market {market_id}: {e}")
+            return None
+
+    def get_markets_by_ids(
+        self,
+        market_ids: list[str],
+        max_workers: int = 25,
+    ) -> list[PolymarketMarket]:
+        """
+        Fetch multiple markets by ID in parallel using the single-resource endpoint.
+
+        Uses ThreadPoolExecutor with max_workers=25 to stay safely under the
+        /markets rate limit of 300 req/10s (30 req/s). At 25 concurrent workers
+        and ~30-50ms round-trip each, effective throughput is ~20 req/s.
+
+        Results are returned in input order. IDs that return None (not found /
+        deleted upstream) are silently dropped — the caller sees only valid markets.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        if not market_ids:
+            return []
+
+        results: dict[str, PolymarketMarket | None] = {}
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            future_to_id = {
+                pool.submit(self.get_market_by_id, mid): mid
+                for mid in market_ids
+            }
+            for future in as_completed(future_to_id):
+                mid = future_to_id[future]
+                try:
+                    results[mid] = future.result()
+                except Exception as e:
+                    logger.error(f"Unexpected error fetching market {mid}: {e}")
+                    results[mid] = None
+
+        found = [results[mid] for mid in market_ids if results.get(mid) is not None]
+        not_found = sum(1 for mid in market_ids if results.get(mid) is None)
+        logger.info(
+            f"get_markets_by_ids: {len(found)} fetched, "
+            f"{not_found} not found — out of {len(market_ids)} requested."
+        )
+        return found

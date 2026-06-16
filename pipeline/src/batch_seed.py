@@ -155,6 +155,43 @@ def seed_discord(t0_str: str, t1_str: str) -> None:
                 all_raw_messages = [] # reset buffer
 
 
+def backfill_missing_markets() -> None:
+    """
+    Fetches all Polymarket markets referenced in Discord threads that are
+    missing from raw_pm_markets.
+
+    The bulk GET /markets?id[]=... silently drops archived/old markets.
+    Uses get_markets_by_ids() which calls GET /markets/{id} in parallel,
+    respecting the 300 req/10s rate limit via an internal thread pool.
+    """
+    logger.info("Scanning for market IDs referenced in Discord threads but missing from raw_pm_markets...")
+
+    conn = get_sqlite_conn()
+    rows = conn.execute("""
+        SELECT DISTINCT t.market_id
+        FROM clean_dc_threads t
+        LEFT JOIN raw_pm_markets m ON t.market_id = m.id
+        WHERE t.market_id IS NOT NULL AND m.id IS NULL
+        ORDER BY CAST(t.market_id AS INTEGER)
+    """).fetchall()
+    conn.close()
+
+    missing_ids = [r[0] for r in rows]
+    if not missing_ids:
+        logger.info("No missing markets found — raw_pm_markets is complete.")
+        return
+
+    logger.info(f"Found {len(missing_ids)} missing market IDs. Fetching in parallel...")
+
+    client = PolymarketClient()
+    markets = client.get_markets_by_ids(missing_ids)
+
+    if markets:
+        records = [m.model_dump() for m in markets]
+        load_json_to_table("raw_pm_markets", records)
+        logger.success(f"Backfill complete: {len(records)}/{len(missing_ids)} markets loaded.")
+
+
 def seed_discord_from_file(filepath: str) -> None:
     """
     Bypasses API and seeds Discord tables directly from a raw JSON file dump.
@@ -195,12 +232,27 @@ def seed_discord_from_file(filepath: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="ELT Batch Seeder")
     parser.add_argument(
-        "--client", type=str, choices=["polymarket", "discord"], required=True
+        "--client", type=str, choices=["polymarket", "discord"], required=False
     )
     parser.add_argument("--t0", type=str, required=False, help="Start date (YYYY-MM-DD)")
     parser.add_argument("--t1", type=str, required=False, help="End date (YYYY-MM-DD)")
     parser.add_argument("--from_file", type=str, required=False, help="Bypass API and load from local JSON file")
+    parser.add_argument(
+        "--backfill-markets", action="store_true",
+        help="Fetch all markets referenced in Discord threads but missing from raw_pm_markets"
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Loguru log level (default: INFO)",
+    )
     args = parser.parse_args()
+
+    import sys as _sys
+    logger.remove()
+    logger.add(_sys.stderr, level=args.log_level)
 
     # Create orchestrator record
     run_id = f"batch_{uuid.uuid4()}"
@@ -215,7 +267,9 @@ def main() -> int:
     conn.close()
 
     try:
-        if args.client == "polymarket":
+        if args.backfill_markets:
+            backfill_missing_markets()
+        elif args.client == "polymarket":
             if not args.t0 or not args.t1:
                 raise ValueError("--t0 and --t1 are required for polymarket client")
             seed_polymarket(args.t0, args.t1)
@@ -226,6 +280,8 @@ def main() -> int:
                 if not args.t0 or not args.t1:
                     raise ValueError("--t0 and --t1 are required for discord client without --from_file")
                 seed_discord(args.t0, args.t1)
+        else:
+            raise ValueError("Must specify --client or --backfill-markets")
 
         end_time = datetime.utcnow().isoformat()
         conn = get_sqlite_conn()
