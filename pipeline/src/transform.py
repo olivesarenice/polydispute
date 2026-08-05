@@ -148,7 +148,7 @@ def transform_dc_messages() -> None:
 
 def transform_polygon_ancillary() -> None:
     logger.info("Transforming clean_polygon_ancillary...")
-    query = "SELECT question_id as uma_question_id, oracle_version, ancillary_data_decoded FROM raw_polygon_ancillary"
+    query = "SELECT question_id as uma_question_id, oracle_version, ancillary_data_hex, ancillary_data_decoded FROM raw_polygon_ancillary"
 
     conn = get_sqlite_conn()
     df = pl.read_database(query, conn)
@@ -158,8 +158,60 @@ def transform_polygon_ancillary() -> None:
         logger.warning("No polygon ancillary records to transform.")
         return
 
+    from web3 import Web3
+
     records = df.to_dicts()
+    for r in records:
+        hex_data = r.pop("ancillary_data_hex", None)
+        r["ancillary_data_hash"] = None
+        if hex_data:
+            try:
+                hex_str = str(hex_data)
+                if not hex_str.startswith("0x"):
+                    hex_str = "0x" + hex_str
+                r["ancillary_data_hash"] = Web3.keccak(hexstr=hex_str).hex().lower()
+            except Exception as e:
+                logger.warning(f"Failed to compute keccak hash for {r.get('uma_question_id')}: {e}")
+
     load_json_to_table("clean_polygon_ancillary", records, pk="uma_question_id")
+
+
+def transform_uma_rocks() -> None:
+    logger.info("Transforming clean_uma_rocks_signals...")
+    query = "SELECT id, question, ancillary_data, answer, round_id FROM raw_uma_rocks_signals"
+
+    conn = get_sqlite_conn()
+    try:
+        df = pl.read_database(query, conn)
+    except Exception as e:
+        logger.warning(f"Could not read raw_uma_rocks_signals: {e}")
+        conn.close()
+        return
+    conn.close()
+
+    if df.is_empty():
+        logger.warning("No raw UMA Rocks signals to transform.")
+        return
+
+    import re
+    from web3 import Web3
+
+    records = df.to_dicts()
+    for r in records:
+        ancillary_raw = r.pop("ancillary_data", None)
+        r["ancillary_data_hash"] = None
+        if ancillary_raw:
+            try:
+                raw_str = str(ancillary_raw)
+                match = re.search(r"ancillaryDataHash:(0x[a-fA-F0-9]{64})", raw_str)
+                if match:
+                    r["ancillary_data_hash"] = match.group(1).lower()
+                elif raw_str.startswith("0x"):
+                    r["ancillary_data_hash"] = Web3.keccak(hexstr=raw_str).hex().lower()
+            except Exception as e:
+                logger.warning(f"Failed to compute ancillary_data_hash for raw UMA signal {r.get('id')}: {e}")
+
+    load_json_to_table("clean_uma_rocks_signals", records, pk="id")
 
 
 def create_user_profiles_view() -> None:
@@ -230,11 +282,7 @@ def create_user_profiles_view() -> None:
 def create_disputes_view() -> None:
     """
     Phase 3: Aggregates raw vote counts AND calibration-weighted vote scores
-    per dispute thread. Weighted scores feed directly into the tau formula.
-
-    weighted_p1_votes / weighted_p2_votes: sum of lifetime_accuracy for each
-    calibrated voter (>= MIN_CALIBRATION_VOTES graded predictions). Uncalibrated
-    users contribute 0 weight.
+    per dispute thread, plus Tier 1 UMA Rocks consensus answers joined via keccak256 hash.
     """
     logger.info("Creating disputes_view...")
     conn = get_sqlite_conn()
@@ -256,6 +304,10 @@ def create_disputes_view() -> None:
         m.neg_risk,
         m.yes_price,
         m.no_price,
+
+        -- Tier 1 UMA Rocks Anchor stance (joined via keccak256 hash)
+        u_rocks.answer AS uma_rocks_answer,
+        u_rocks.round_id AS uma_rocks_round_id,
 
         -- Raw unweighted vote counts (system accounts excluded)
         COUNT(CASE WHEN v.vote_type = 'P1' THEN 1 END) AS p1_votes,
@@ -282,7 +334,8 @@ def create_disputes_view() -> None:
             END
         ) AS weighted_p2_votes,
 
-        p.ancillary_data_decoded
+        p.ancillary_data_decoded,
+        p.ancillary_data_hash
     FROM clean_dc_threads t
     JOIN clean_pm_markets m ON t.market_id = m.market_id
     -- Exclude system accounts at join time: cleans both raw counts and weighted scores
@@ -291,6 +344,7 @@ def create_disputes_view() -> None:
         AND v.author_username NOT IN ({excluded})
     LEFT JOIN discord_user_profiles u ON v.author_username = u.author_username
     LEFT JOIN clean_polygon_ancillary p ON m.uma_question_id = p.uma_question_id
+    LEFT JOIN clean_uma_rocks_signals u_rocks ON p.ancillary_data_hash = u_rocks.ancillary_data_hash
     GROUP BY t.thread_id;
     """
 
@@ -307,8 +361,9 @@ def main() -> int:
         transform_dc_threads()
         transform_dc_messages()
         transform_polygon_ancillary()
+        transform_uma_rocks()
         create_user_profiles_view()  # Phase 2: must precede disputes_view
-        create_disputes_view()  # Phase 3: joins user profiles
+        create_disputes_view()  # Phase 3: joins user profiles & UMA Rocks
         logger.success("Transformation layer complete.")
         return 0
     except Exception as e:
@@ -318,3 +373,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

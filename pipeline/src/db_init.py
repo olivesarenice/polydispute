@@ -25,12 +25,23 @@ def initialize_database() -> None:
             cursor.execute(create_stmt)
             logger.info(f"Successfully verified/created table: {table.name}")
 
+            # Check for missing columns on existing tables (lightweight migration)
+            cursor.execute(f"PRAGMA table_info({table.name})")
+            existing_cols = {row[1] for row in cursor.fetchall()}
+
+            for col_name, col_type in table.columns.items():
+                if col_name not in existing_cols:
+                    logger.info(f"Adding missing column '{col_name}' to {table.name}")
+                    alter_stmt = f"ALTER TABLE {table.name} ADD COLUMN {col_name} {col_type}"
+                    cursor.execute(alter_stmt)
+
             for idx in table.indices:
                 cursor.execute(idx)
                 logger.info(f"Executed index definition for {table.name}")
         except Exception as e:
             logger.error(f"Failed to initialize table {table.name}: {e}")
             raise
+
 
     conn.commit()
     conn.close()

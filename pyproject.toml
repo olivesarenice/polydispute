@@ -8,6 +8,7 @@ dependencies = [
     "awswrangler>=3.16.1",
     "boto3>=1.43.18",
     "dacite>=1.9.2",
+    "duckdb==1.5.4",
     "fastapi>=0.136.3",
     "loguru>=0.7.3",
     "pandas>=3.0.3",

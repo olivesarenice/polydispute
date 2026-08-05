@@ -9,6 +9,7 @@ from loguru import logger
 from config import DiscordConfig
 from connectors.polymarket import PolymarketClient
 from connectors.discord import DiscordClient
+from connectors.uma_rocks import UMARocksClient
 from db_utils import get_sqlite_conn, load_json_to_table
 
 
@@ -37,7 +38,7 @@ def get_last_watermark() -> str:
 
 def run_discovery() -> None:
     """
-    Discovery: Pulls new markets and threads created since the last watermark.
+    Discovery: Pulls new markets, threads, and UMA Rocks signals created/updated.
     """
     t0 = get_last_watermark()
     t1 = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -80,6 +81,29 @@ def run_discovery() -> None:
         logger.info(f"Discovered {len(new_threads)} new Discord threads.")
         raw_threads = [t.model_dump(by_alias=False) for t in new_threads]
         load_json_to_table("raw_dc_threads", raw_threads)
+
+    # 3. UMA Rocks Discovery
+    try:
+        uma_client = UMARocksClient()
+        signals = uma_client.get_pool_answers()
+        if signals:
+            import hashlib
+            records = []
+            for s in signals:
+                ancillary = s.get("ancillaryData", "")
+                round_id = s.get("roundId", 0)
+                synth_id = hashlib.sha256(f"{round_id}_{ancillary}".encode()).hexdigest()[:16]
+                records.append({
+                    "id": s.get("id", synth_id),
+                    "question": s.get("question"),
+                    "ancillary_data": ancillary,
+                    "answer": s.get("answer"),
+                    "round_id": round_id,
+                })
+            logger.info(f"Discovered {len(records)} UMA Rocks signals.")
+            load_json_to_table("raw_uma_rocks_signals", records, pk="id")
+    except Exception as e:
+        logger.warning(f"UMA Rocks discovery step failed: {e}")
 
 
 def run_sync() -> None:

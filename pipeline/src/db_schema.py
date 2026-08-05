@@ -123,6 +123,20 @@ TABLES = [
         },
     ),
     TableConfig(
+        name="raw_uma_rocks_signals",
+        columns={
+            "id": "TEXT PRIMARY KEY",
+            "question": "TEXT",
+            "ancillary_data": "TEXT",
+            "answer": "TEXT",
+            "round_id": "INTEGER",
+            **get_dw_columns(),
+        },
+        indices=[
+            "CREATE INDEX IF NOT EXISTS idx_raw_uma_round ON raw_uma_rocks_signals(round_id)"
+        ],
+    ),
+    TableConfig(
         name="clean_pm_markets",
         columns={
             "condition_id": "TEXT PRIMARY KEY",
@@ -178,8 +192,28 @@ TABLES = [
         columns={
             "uma_question_id": "TEXT PRIMARY KEY",
             "oracle_version": "TEXT",
+            "ancillary_data_hash": "TEXT",
             "ancillary_data_decoded": "TEXT",
             **get_dw_columns(),
         },
+        indices=[
+            "CREATE INDEX IF NOT EXISTS idx_clean_polygon_hash ON clean_polygon_ancillary(ancillary_data_hash)"
+        ],
+    ),
+    TableConfig(
+        name="clean_uma_rocks_signals",
+        columns={
+            "id": "TEXT PRIMARY KEY",
+            "ancillary_data_hash": "TEXT",
+            "question": "TEXT",
+            "answer": "TEXT",
+            "round_id": "INTEGER",
+            **get_dw_columns(),
+        },
+        indices=[
+            "CREATE INDEX IF NOT EXISTS idx_clean_uma_hash ON clean_uma_rocks_signals(ancillary_data_hash)",
+            "CREATE INDEX IF NOT EXISTS idx_clean_uma_round ON clean_uma_rocks_signals(round_id)",
+        ],
     ),
 ]
+

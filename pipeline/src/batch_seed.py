@@ -12,10 +12,48 @@ from loguru import logger
 from config import PipelineConfig, DiscordConfig
 from connectors.polymarket import PolymarketClient
 from connectors.discord import DiscordClient
+from connectors.uma_rocks import UMARocksClient
 from db_utils import get_sqlite_conn, load_json_to_table
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+def seed_uma_rocks() -> None:
+    """
+    Batch pull for UMA Rocks API (`getPoolAnswers`).
+    Dumps signals into raw_uma_rocks_signals table.
+    """
+    logger.info("Seeding UMA Rocks pool answers...")
+    client = UMARocksClient()
+    signals = client.get_pool_answers()
+
+    if not signals:
+        logger.warning("No signals fetched from UMA Rocks API.")
+        return
+
+    records = []
+    import hashlib
+
+    for s in signals:
+        ancillary = s.get("ancillaryData", "")
+        round_id = s.get("roundId", 0)
+        synth_id = hashlib.sha256(f"{round_id}_{ancillary}".encode()).hexdigest()[:16]
+
+        records.append(
+            {
+                "id": s.get("id", synth_id),
+                "question": s.get("question"),
+                "ancillary_data": ancillary,
+                "answer": s.get("answer"),
+                "round_id": round_id,
+            }
+        )
+
+    logger.info(f"Loading {len(records)} UMA Rocks signals into raw_uma_rocks_signals...")
+    load_json_to_table("raw_uma_rocks_signals", records, pk="id")
+    logger.success("UMA Rocks seeding complete.")
+
 
 
 def seed_polymarket(t0_str: str, t1_str: str) -> None:
@@ -276,7 +314,7 @@ def seed_discord_from_file(filepath: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="ELT Batch Seeder")
     parser.add_argument(
-        "--client", type=str, choices=["polymarket", "discord"], required=False
+        "--client", type=str, choices=["polymarket", "discord", "uma_rocks"], required=False
     )
     parser.add_argument("--t0", type=str, required=False, help="Start date (YYYY-MM-DD)")
     parser.add_argument("--t1", type=str, required=False, help="End date (YYYY-MM-DD)")
@@ -319,6 +357,8 @@ def main() -> int:
             backfill_missing_markets()
         elif args.backfill_clob_tokens:
             backfill_clob_token_ids()
+        elif args.client == "uma_rocks":
+            seed_uma_rocks()
         elif args.client == "polymarket":
             if not args.t0 or not args.t1:
                 raise ValueError("--t0 and --t1 are required for polymarket client")
@@ -332,6 +372,7 @@ def main() -> int:
                 seed_discord(args.t0, args.t1)
         else:
             raise ValueError("Must specify --client or --backfill-markets")
+
 
         end_time = datetime.utcnow().isoformat()
         conn = get_sqlite_conn()
