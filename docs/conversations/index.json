@@ -1,0 +1,45 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-08-05T06:46:38Z",
+  "active_session_id": "c699e41c-0bee-440b-b34a-8f31a2d04196",
+  "sessions": [
+    {
+      "id": "c699e41c-0bee-440b-b34a-8f31a2d04196",
+      "date": "2026-07-28",
+      "file": "c699e41c-0bee-440b-b34a-8f31a2d04196.json",
+      "topics": [
+        "pipeline-dag",
+        "motherduck",
+        "tenacity-orchestration",
+        "env-config",
+        "duckdb-version-pin"
+      ],
+      "summary": "Formalized data ingestion pipeline DAG, storage selection (Unified MotherDuck), zero-infra orchestration (tenacity), env setup, and DuckDB 1.5.4 pin.",
+      "key_decisions": [
+        "Use 5-tier pipeline DAG: Tier 0 (Root), Tier 1 (Identity/Backfill), Tier 2 (Prices), Tier 3 (Clean), Tier 4 (Views)",
+        "Store metadata (~50MB) and 2-year price history (~415MB) in unified MotherDuck DB (md:polydispute)",
+        "Orchestrate via pure Python main.py using tenacity @retry decorators triggered via Linux cron",
+        "Pin duckdb==1.5.4 in pyproject.toml for MotherDuck C++ extension compatibility",
+        "Created scripts/check_env.py to validate API HTTP 200 responses"
+      ]
+    },
+    {
+      "id": "5e69c26c-5127-4829-a708-62a7252eaf04",
+      "date": "2026-07-28",
+      "file": "5e69c26c-5127-4829-a708-62a7252eaf04.json",
+      "topics": [
+        "polymarket-api",
+        "price-history-system",
+        "uma-rocks-anchor",
+        "user-calibration"
+      ],
+      "summary": "Verified Polymarket prices-history endpoint midpoint mechanics, 15-day range cap, dispute window bounds, UMA Rocks Tier 1 anchor, and Tier 2 user profiles.",
+      "key_decisions": [
+        "Polymarket prices-history returns midpoint (p), not last transacted fill",
+        "Dispute price window bounded by [thread_open - 1d, uma_end_date OR now]",
+        "Tier 1 UMA Rocks consensus signals joined via keccak256 hash of ancillaryData",
+        "Tier 2 Discord user calibration filters out system accounts (UMA Herald)"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "start_timestamp": "2026-07-28T08:13:57Z",
+  "last_timestamp": "2026-07-28T08:26:25Z",
+  "summary": "# Session Summary: Price History API Verification & Calibration Model\n\n**Conversation ID:** `5e69c26c-5127-4829-a708-62a7252eaf04`  \n**Date:** 2026-07-28  \n**Topic:** Polymarket Price History API Verification, Windowing Strategy, and Hybrid Calibration\n\n---\n\n## Key Technical Decisions & Consensus\n\n### 1. Polymarket Price History API Findings\n* `prices-history` returns **midpoint (`p`)**, not last-transacted fill.\n* Timestamps are resampled bar times (`observed_at`), governed by `fidelity=1` (60s bars).\n* **Range mode** (`startTs`/`endTs`) is capped at **15 days** per call.\n* Resolution timestamp (`uma_end_date` / `closed_time`) is available directly on Gamma market payloads.\n\n### 2. Dispute Price Window\n* `window_start = thread_open_time - 1 day`\n* `window_end = uma_end_date (if resolved) ELSE now (if in-progress)`\n* Average dispute duration is 2-4 days, fitting comfortably within a single 15-day API call.\n\n### 3. Calibration Stance (Tier 1 & Tier 2)\n* **Tier 1 (Anchor):** `getPoolAnswers` from UMA Rocks API (`raw_uma_rocks_signals`) joined to markets via Keccak256 hash of `ancillaryData`.\n* **Tier 2 (User Profiles):** Accuracy calculated over resolved markets for voters with >= 5 graded predictions (`P1` = NO, `P2` = YES). Excludes system accounts (`UMA Herald`).",
+  "conversation": [
+    {
+      "user": "read and understand the past changes w.r.t @[pipeline/plans/price_history_system.md]  and @[pipeline/plans/v3_hybrid_calibration.md] plans, what has been done and what is outstanding?",
+      "response": "Provided detailed analysis of price_history_system.md and v3_hybrid_calibration.md plans, verifying Polymarket API midpoint mechanics, 15-day range cap, dispute window bounds [thread_open - 1d, uma_end_date], UMA Rocks Tier 1 anchor ingestion, and Tier 2 Discord user accuracy calibration."
+    }
+  ]
+}
