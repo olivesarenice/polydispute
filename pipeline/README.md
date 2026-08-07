@@ -7,41 +7,21 @@ This directory contains the robust ELT (Extract, Load, Transform) data pipeline 
 The pipeline is split into Extraction (seeding raw data) and Transformation (cleaning and joining). 
 **Note:** Always run extraction *before* transformation.
 
-### Full Refresh (New Setup)
-To perform a complete initialization from scratch:
-
-```bash
-# 1. Initialize the SQLite Database schema
-uv run python pipeline/src/db_init.py
-
-# 2. Extract Discord Threads & Messages (Example: All of May 2026)
-uv run python pipeline/src/batch_seed.py --client discord --t0 2026-05-01 --t1 2026-05-31
-
-# 3. Extract Polymarket Events & Markets (Must match the same timeframe)
-uv run python pipeline/src/batch_seed.py --client polymarket --t0 2026-05-01 --t1 2026-05-31
-
-# 4. Sweep Polygon Blockchain for UMA Resolution Rules
-uv run python pipeline/src/pull_polygon.py --limit -1 --t0 2026-05-01 --t1 2026-05-31
-
-# 5. Execute Transformation Layer (Transforms raw -> clean tables & builds analytical views)
-uv run python pipeline/src/transform.py
-```
-
 ### Incremental Updates
-For daily or weekly updates, you only need to run the extraction for the delta period and then re-run the transformation layer.
+For daily or weekly updates, you only need to run the extraction for the delta period and then re-run the transformation layer. For a full refresh, the delta period is simply the full period to backfill for.
 
 ```bash
-# 1. Extract recent Discord data
-uv run python pipeline/src/batch_seed.py --client discord --t0 2026-06-01 --t1 2026-06-07
+# 1. Phase 1: Extract & Load Discord Disputes (Requires time window --t0 / --t1)
+uv run python pipeline/src/run_pipelines.py --phase 1 --op all --t0 2026-08-07 --t1 2026-08-08
 
-# 2. Extract recent Polymarket data
-uv run python pipeline/src/batch_seed.py --client polymarket --t0 2026-06-01 --t1 2026-06-07
+# 2. Phase 2: Ingest Polymarket Catalog Metadata (State-driven)
+uv run python pipeline/src/run_pipelines.py --phase 2 --op all
 
-# 3. Sweep Polygon for any newly discovered markets
-uv run python pipeline/src/pull_polygon.py --limit 100 --t0 2026-06-01 --t1 2026-06-07
+# 3. Phase 3: Ingest UMA Rocks Committee Signals (State-driven)
+uv run python pipeline/src/run_pipelines.py --phase 3 --op all
 
-# 4. Rebuild the clean tables and views
-uv run python pipeline/src/transform.py
+# 4. Phase 4: Ingest CLOB 1-Minute Price History (State-driven)
+uv run python pipeline/src/run_pipelines.py --phase 4 --op all
 ```
 
 ## 2. Raw Data Model & Dependencies

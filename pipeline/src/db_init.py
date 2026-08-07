@@ -1,55 +1,75 @@
 import argparse
-import os
-import sqlite3
 import sys
 
+from db_schema import TABLES
+from db_utils import get_db_conn
+from dotenv import load_dotenv
 from loguru import logger
 
-from config import PipelineConfig
-from db_schema import TABLES
+load_dotenv()
 
 
 def initialize_database() -> None:
-    logger.info(f"Initializing database at {PipelineConfig.DB_PATH}")
-    os.makedirs(os.path.dirname(PipelineConfig.DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(PipelineConfig.DB_PATH)
-    cursor = conn.cursor()
+    logger.info("Initializing MotherDuck / DuckDB tables...")
+    conn = get_db_conn()
 
     for table in TABLES:
-        col_defs = ", ".join(
-            [f"{col} {ctype}" for col, ctype in table.columns.items()]
-        )
+        col_defs_list = [f"{col} {ctype}" for col, ctype in table.column_types.items()]
+
+        if table.primary_key:
+            pk_str = ", ".join(table.primary_key)
+            col_defs_list.append(f"PRIMARY KEY ({pk_str})")
+
+        col_defs = ", ".join(col_defs_list)
         create_stmt = f"CREATE TABLE IF NOT EXISTS {table.name} ({col_defs})"
 
         try:
-            cursor.execute(create_stmt)
+            conn.execute(create_stmt)
             logger.info(f"Successfully verified/created table: {table.name}")
 
-            # Check for missing columns on existing tables (lightweight migration)
-            cursor.execute(f"PRAGMA table_info({table.name})")
-            existing_cols = {row[1] for row in cursor.fetchall()}
+            # Lightweight schema migration for missing columns
+            for col, ctype in table.column_types.items():
+                alter_stmt = f"ALTER TABLE {table.name} ADD COLUMN IF NOT EXISTS {col} {ctype.strip()}"
+                try:
+                    conn.execute(alter_stmt)
+                except Exception as alter_err:
+                    logger.debug(f"Col {col} check on {table.name}: {alter_err}")
 
-            for col_name, col_type in table.columns.items():
-                if col_name not in existing_cols:
-                    logger.info(f"Adding missing column '{col_name}' to {table.name}")
-                    alter_stmt = f"ALTER TABLE {table.name} ADD COLUMN {col_name} {col_type}"
-                    cursor.execute(alter_stmt)
+            # Create secondary indexes if defined
+            for idx_cols in table.indexes:
+                idx_name = f"idx_{table.name}_{'_'.join(idx_cols)}"
+                cols_str = ", ".join(idx_cols)
+                try:
+                    conn.execute(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table.name}({cols_str})")
+                except Exception as idx_err:
+                    logger.debug(f"Index creation notice on {table.name}: {idx_err}")
 
-            for idx in table.indices:
-                cursor.execute(idx)
-                logger.info(f"Executed index definition for {table.name}")
+            # Apply table description comment to MotherDuck catalog
+            if table.description:
+                try:
+                    desc_escaped = table.description.replace("'", "''")
+                    conn.execute(f"COMMENT ON TABLE {table.name} IS '{desc_escaped}'")
+                except Exception as tbl_cm_err:
+                    logger.debug(f"Table comment failed on {table.name}: {tbl_cm_err}")
+
+            # Apply column description comments to MotherDuck catalog
+            for col, comment in table.column_descriptions.items():
+                try:
+                    comment_escaped = comment.replace("'", "''")
+                    conn.execute(f"COMMENT ON COLUMN {table.name}.{col} IS '{comment_escaped}'")
+                except Exception as col_cm_err:
+                    logger.debug(f"Column comment failed on {table.name}.{col}: {col_cm_err}")
+
         except Exception as e:
             logger.error(f"Failed to initialize table {table.name}: {e}")
             raise
 
-
-    conn.commit()
     conn.close()
     logger.success("Database initialization complete.")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Initialize SQLite DB Schemas")
+    parser = argparse.ArgumentParser(description="Initialize MotherDuck DB Schemas")
     parser.parse_args()
 
     try:

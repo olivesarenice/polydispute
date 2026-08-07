@@ -20,7 +20,8 @@
         "Store metadata (~50MB) and 2-year price history (~415MB) in unified MotherDuck DB (md:polydispute)",
         "Orchestrate via pure Python main.py using tenacity @retry decorators triggered via Linux cron",
         "Pin duckdb==1.5.4 in pyproject.toml for MotherDuck C++ extension compatibility",
-        "Created scripts/check_env.py to validate API HTTP 200 responses"
+        "Created scripts/check_env.py to validate API HTTP 200 responses",
+        "Plan to adopt dbt-duckdb for transformations later; focus on completing Python ingestion layer (Tier 0-2) first"
       ]
     },
     {

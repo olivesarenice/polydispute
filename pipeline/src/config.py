@@ -21,6 +21,7 @@ class PipelineConfig:
 
     DB_PATH = os.path.join(BASE_DIR, "pipeline", "data", "polydispute.db")
     TMP_DATA_DIR = os.path.join(BASE_DIR, "pipeline", "data", "tmp")
+    RAW_STAGING_DIR = os.path.join(BASE_DIR, "pipeline", "data", "raw")
 
     # Tier 2 calibration: users with fewer than this many graded (P1/P2) votes
     # on resolved markets get weight=0 in the tau computation.
