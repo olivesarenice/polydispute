@@ -22,11 +22,14 @@ def pull_discord_stage(window: TimeWindow) -> str:
     out_file = get_stage_output_path("discord", window.runtime_unix, "json")
 
     logger.info(
-        f"Phase 1 Pull: Fetching Discord threads from channel {channel_id} (window: {window.t0} -> {window.t1})..."
+        f"Phase 1 Pull: Fetching Discord threads from channel {channel_id} (window: {window.iso_t0} -> {window.iso_t1})..."
     )
 
     threads = dc_client.get_thread_starters(
-        channel_id=channel_id, limit=DiscordConfig.DEFAULT_LIMIT
+        channel_id=channel_id,
+        limit=DiscordConfig.DEFAULT_LIMIT,
+        t0_str=window.iso_t0,
+        t1_str=window.iso_t1,
     )
 
     all_data = []

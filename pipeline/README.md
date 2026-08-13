@@ -1,58 +1,53 @@
 # Polydispute ELT Pipeline
 
-This directory contains the robust ELT (Extract, Load, Transform) data pipeline for the Polydispute analytics engine. It is responsible for orchestrating the extraction of governance and dispute data across Polymarket, Discord, and the Polygon blockchain, and transforming it into a clean, relational dimensional model.
+This directory contains the modular ELT (Extract, Load, Transform) data pipeline for the Polydispute prediction market analytics engine. It orchestrates the ingestion of Discord dispute discussions, Polymarket market metadata, UMA Rocks committee voting signals, and 1-minute CLOB price histories into MotherDuck.
 
-## 1. Pipeline Execution & Usage
+---
 
-The pipeline is split into Extraction (seeding raw data) and Transformation (cleaning and joining). 
-**Note:** Always run extraction *before* transformation.
+## 1. Incremental Pipeline Execution
 
-### Incremental Updates
-For daily or weekly updates, you only need to run the extraction for the delta period and then re-run the transformation layer. For a full refresh, the delta period is simply the full period to backfill for.
+Run the four sequential phases in order for routine incremental pipeline execution:
 
 ```bash
-# 1. Phase 1: Extract & Load Discord Disputes (Requires time window --t0 / --t1)
-uv run python pipeline/src/run_pipelines.py --phase 1 --op all --t0 2026-08-07 --t1 2026-08-08
+# Step 1: Discord Disputes
+# Mode A (Auto-Range): Defaults to rolling 24 hours (-1 day) from current execution time if --t0/--t1 omitted
+uv run python pipeline/src/run_pipelines.py --phase 1 --op all
 
-# 2. Phase 2: Ingest Polymarket Catalog Metadata (State-driven)
+# Mode B (Explicit Date Range): Bounds strictly to 00:00 UTC calendar dates (e.g., 2026-08-12T00:00:00Z -> 2026-08-13T00:00:00Z)
+uv run python pipeline/src/run_pipelines.py --phase 1 --op all --t0 2026-08-12 --t1 2026-08-13
+
+# Step 2: Polymarket Metadata (State-driven: fetches Gamma metadata for active/new market IDs)
 uv run python pipeline/src/run_pipelines.py --phase 2 --op all
 
-# 3. Phase 3: Ingest UMA Rocks Committee Signals (State-driven)
+# Step 3: UMA Rocks Signals (State-driven: incrementally pulls committee consensus since MAX(timestamp))
 uv run python pipeline/src/run_pipelines.py --phase 3 --op all
 
-# 4. Phase 4: Ingest CLOB 1-Minute Price History (State-driven)
-uv run python pipeline/src/run_pipelines.py --phase 4 --op all
+# Step 4: CLOB Price History (State-driven: pulls 1-min midpoint bars since MAX(observed_at))
+uv run python pipeline/src/run_pipelines.py --phase 4 --op all --targets unresolved --threads 16
 ```
 
-## 2. Raw Data Model & Dependencies
+---
 
-The extraction layer pulls raw JSON payloads and loads them into an idempotent SQLite database without heavy modifications. The dependencies flow as follows:
+## 2. Phase Architecture & Staging Layout
 
-*   **Polymarket Gamma API**
-    *   `raw_pm_events` (1) -> (N) `raw_pm_markets`
-    *   *Note:* The Polymarket API nests markets inside overarching "Events".
-*   **Discord UMA Server**
-    *   `raw_dc_threads` (1) -> (N) `raw_dc_messages`
-    *   *Note:* Threads are created in the `#disputes` channel. Messages contain the community votes (P1-P4).
-*   **Polygon RPC (UMA Oracle)**
-    *   `raw_pm_markets` (1) -> (1) `raw_polygon_ancillary`
-    *   *Note:* Uses the CTF Adapter address (`resolved_by`) and the `uma_question_id` (a bytes32 hash) to query the exact text of the resolution rules from the Polygon blockchain.
+Each phase operates under a two-stage pattern (**Pull** $\to$ **Load**):
+- **Pull**: Fetches raw data from external APIs and saves stage-isolated payloads to `pipeline/data/raw/<stage_name>/output_<unix>.<ext>`.
+- **Load**: Ingests staged files into MotherDuck `raw_*` tables and executes Silver `clean_*` transformations.
 
-## 3. Transformation Layer (`transform.py`)
+### Raw Data Staging Structure
+```
+pipeline/data/raw/
+├── discord/          # output_<unix>.json (Discord threads & discussion messages)
+├── polymarket/       # output_<unix>.json (Polymarket Gamma API market metadata)
+├── umarocks/         # output_<unix>.json (UMA Rocks committee consensus signals)
+└── price_history/    # output_<unix>.parquet (ZSTD-compressed 1-min CLOB midpoint bars)
+```
 
-The transformation layer utilizes **Polars** to perform in-memory cleaning before loading the data into `clean_*` tables. We use a dimensional approach to keep the tables normalized, avoiding bloated, wide tables. 
+---
 
-### Key Extractions & Cleaning:
-*   **`clean_dc_threads`**: 
-    *   *Extraction:* Scans the raw message payloads for the string `market_id: \d+` (injected by the UMA bot).
-    *   *Result:* Assigns a clean `market_id` to each thread so it can be joined natively to Polymarket data. Non-Polymarket threads missing this ID are safely kept but naturally ignored during downstream joins.
-*   **`clean_dc_messages`**: 
-    *   *Extraction:* Uses vectorized regex `(?i)\b(P[1-4])\b` to parse raw Discord content.
-    *   *Result:* Extracts the exact vote type (`P1`, `P2`, `P3`, `P4`) and isolates it into a clean `vote_type` column. Unnecessary raw message text is dropped to save memory.
-*   **`clean_pm_markets`**:
-    *   *Standardization:* Maps the Gamma API's numeric ID to `market_id`, and the bytes32 oracle hash to `uma_question_id` to enforce strict ID hygiene. Propagates vital dispute signals like `uma_resolution_status`, `uma_bond`, and `neg_risk`.
-*   **`clean_polygon_ancillary`**:
-    *   *Standardization:* Enforces `uma_question_id` as the primary key. Retains the cleanly decoded UTF-8 resolution rules.
+## 3. Data Transformation & Validation Rules
 
-### The Analytical View (`disputes_view`)
-Instead of duplicating joined data, the pipeline builds an SQLite `VIEW`. This aggregates the P1-P4 votes per thread and strictly joins the Discord, Polymarket, and Polygon domains using the cleansed IDs (`market_id` and `uma_question_id`). This serves as the single pane of glass for the dashboard backend.
+- **`clean_dc_threads`**: Scans Discord starter posts and discussion messages for Polymarket URLs and `market_id: \d+` tags, extracting valid 6-to-8 digit `market_id` foreign keys (`6 <= len(market_id) <= 8`).
+- **`clean_dc_messages`**: Parses community voting stances (`P1`, `P2`, `P3`, `P4`) from raw Discord message bodies using vectorized regex matching.
+- **`clean_pm_markets`**: Normalizes outcome prices (`yes_price`, `no_price`), parses outcome token array IDs (`clob_token_ids`), and casts dates to native `TIMESTAMPTZ`.
+- **`clean_ur_signals`**: Formats UMA Rocks DVM committee answers (`P1`–`P4`) and computes `timestamp_iso` (`TIMESTAMPTZ`).

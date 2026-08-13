@@ -28,8 +28,18 @@ class TimeWindow:
         self.unix_t1 = int(self.t1_dt.timestamp())
 
         now_utc = datetime.now(timezone.utc)
-        self.runtime_unix = runtime_unix if runtime_unix is not None else int(now_utc.timestamp())
+        self.runtime_unix = (
+            runtime_unix if runtime_unix is not None else int(now_utc.timestamp())
+        )
         self.run_id = run_id or f"run_{self.runtime_unix}"
+
+    @property
+    def t0(self) -> str:
+        return self.iso_t0
+
+    @property
+    def t1(self) -> str:
+        return self.iso_t1
 
     @staticmethod
     def _to_utc_dt(val: Union[datetime, int, float, str]) -> datetime:
@@ -71,7 +81,9 @@ def get_latest_stage_file(stage_name: str) -> str:
 
     candidates = []
     for entry in os.listdir(stage_dir):
-        if entry.startswith("output_") and os.path.isfile(os.path.join(stage_dir, entry)):
+        if entry.startswith("output_") and os.path.isfile(
+            os.path.join(stage_dir, entry)
+        ):
             # Parse timestamp from output_<unix>.<ext>
             name_part = entry.split(".")[0]
             ts_str = name_part.replace("output_", "")

@@ -35,6 +35,15 @@ def initialize_database() -> None:
                 except Exception as alter_err:
                     logger.debug(f"Col {col} check on {table.name}: {alter_err}")
 
+            # Create unique index for primary key to enforce ON CONFLICT targets
+            if table.primary_key:
+                pk_name = f"idx_{table.name}_pk"
+                pk_str = ", ".join(table.primary_key)
+                try:
+                    conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS {pk_name} ON {table.name}({pk_str})")
+                except Exception as pk_err:
+                    logger.debug(f"PK index creation notice on {table.name}: {pk_err}")
+
             # Create secondary indexes if defined
             for idx_cols in table.indexes:
                 idx_name = f"idx_{table.name}_{'_'.join(idx_cols)}"

@@ -69,6 +69,7 @@ def pull_dispute_price_history(
         LEFT JOIN raw_pm_price_history ph ON t.market_id = ph.market_id
         WHERE t.market_id IS NOT NULL 
           AND t.market_id != ''
+          AND LENGTH(t.market_id) >= 6
           AND m.clob_token_ids IS NOT NULL 
           AND m.clob_token_ids != ''
           {status_filter}
@@ -98,6 +99,7 @@ def pull_dispute_price_history(
             LEFT JOIN raw_pm_price_history ph ON m.id = ph.market_id
             WHERE m.clob_token_ids IS NOT NULL 
               AND m.clob_token_ids != ''
+              AND LENGTH(m.id) >= 6
               {status_filter}
             GROUP BY m.id, m.clob_token_ids, m.start_date, m.end_date, m.closed_time, m.uma_end_date, m.closed, m.uma_resolution_status
             {limit_clause}
@@ -122,11 +124,18 @@ def pull_dispute_price_history(
     if target_market_ids:
         df_targets = df_targets[df_targets["market_id"].isin(target_market_ids)]
 
+    prev_active_count = int((df_targets["max_observed_at"].notna()).sum())
+    new_markets_count = int((df_targets["max_observed_at"].isna()).sum())
+
+    logger.info(
+        f"Target Price History Breakdown: {len(df_targets)} total target markets ({new_markets_count} completely new, {prev_active_count} previously active/existing)."
+    )
     logger.info(
         f"Processing price history for {len(df_targets)} target markets (fidelity={fidelity}m, threads={max_threads})..."
     )
     clob_client = ClobClient()
-    now_ts = int(datetime.now(timezone.utc).timestamp())
+    # Floor current timestamp to latest completed 60-second minute boundary
+    now_ts = (int(datetime.now(timezone.utc).timestamp()) // 60) * 60
 
     tasks = []
     skipped_count = 0
@@ -150,6 +159,9 @@ def pull_dispute_price_history(
             or parse_unix_ts(row.get("uma_end_date"))
             or parse_unix_ts(row.get("end_date"))
         )
+
+        if closed_ts:
+            closed_ts = (closed_ts // 60) * 60
 
         end_ts = closed_ts if (is_closed and closed_ts) else now_ts
 

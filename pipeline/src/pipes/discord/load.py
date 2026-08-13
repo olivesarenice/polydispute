@@ -109,7 +109,7 @@ def clean_discord_stage(run_id: Optional[str] = None) -> None:
             m_match = market_id_pattern.search(text)
             if m_match:
                 mid_str = m_match.group(1)
-                if len(mid_str) <= 8:
+                if 6 <= len(mid_str) <= 8:
                     return mid_str
             s_match = slug_pattern.search(text)
             if s_match:

@@ -78,9 +78,9 @@ def main() -> int:
             case "1_discord":
                 if do_pull:
                     if not args.t0 or not args.t1:
-                        logger.warning("Discord pull requested without --t0/--t1 dates. Defaulting to last 7 days.")
+                        logger.info("Discord pull requested without --t0/--t1 dates. Defaulting to last 1 day.")
                         t1_val = args.t1 or now.strftime("%Y-%m-%dT%H:%M:%SZ")
-                        t0_val = args.t0 or (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                        t0_val = args.t0 or (now - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
                     else:
                         t0_val, t1_val = args.t0, args.t1
 

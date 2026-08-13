@@ -40,8 +40,8 @@ def get_target_dispute_ids() -> List[str]:
         conn.close()
         for r in rows:
             val = str(r[0]).strip()
-            # Ignore trailing 10-digit Unix timestamps (- 1785708038)
-            if val.isdigit() and len(val) <= 8:
+            # Ignore non-market IDs and small noise IDs (< 6 digits or > 8 digits)
+            if val.isdigit() and 6 <= len(val) <= 8:
                 target_ids.add(val)
     except Exception as e:
         logger.debug(f"MotherDuck clean_dc_threads query notice: {e}")
@@ -59,19 +59,32 @@ def get_target_dispute_ids() -> List[str]:
                 for item in threads_payload:
                     content = item.get("content", "")
                     m = mid_pattern.search(content)
-                    if m and len(m.group(1)) <= 8:
+                    if m and 6 <= len(m.group(1)) <= 8:
                         target_ids.add(m.group(1))
 
                     msgs = item.get("messages", [])
                     for msg in msgs:
                         m_msg = mid_pattern.search(msg.get("content", ""))
-                        if m_msg and len(m_msg.group(1)) <= 8:
+                        if m_msg and 6 <= len(m_msg.group(1)) <= 8:
                             target_ids.add(m_msg.group(1))
         except Exception as e:
             logger.debug(f"Staged discord_threads.json fallback notice: {e}")
 
+    # Query existing market IDs in raw_pm_markets to count new vs existing targets
+    existing_ids = set()
+    try:
+        conn = get_db_conn()
+        rows = conn.execute("SELECT DISTINCT id FROM raw_pm_markets").fetchall()
+        conn.close()
+        existing_ids = set(str(r[0]).strip() for r in rows)
+    except Exception as e:
+        logger.debug(f"raw_pm_markets existing IDs query notice: {e}")
+
+    new_count = len([m_id for m_id in target_ids if m_id not in existing_ids])
+    existing_count = len([m_id for m_id in target_ids if m_id in existing_ids])
+
     logger.info(
-        f"Extracted {len(target_ids)} distinct target dispute market IDs for Polymarket pull."
+        f"Target Polymarket Breakdown: {len(target_ids)} total target markets ({new_count} completely new, {existing_count} previously active/existing)."
     )
     return list(target_ids)
 
