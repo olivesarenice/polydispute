@@ -25,6 +25,7 @@ dependencies = [
     "plotext",
     "matplotlib",
     "prefect>=3.8.3",
+    "prefect-docker>=0.6.0",
 ]
 
 

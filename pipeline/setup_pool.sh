@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-POOL_NAME="polydispute-pool"
+POOL_NAME="polydispute-local"
 POOL_TYPE="process"
 
 # Use Doppler if available/configured, otherwise fallback to src/.env
@@ -19,17 +19,14 @@ else
     EXEC_PREFIX=""
 fi
 
-echo "Ensuring Prefect work pool '${POOL_NAME}' exists..."
-
-# Check if pool exists (suppress output)
-if $EXEC_PREFIX uv run prefect work-pool inspect "$POOL_NAME" > /dev/null 2>&1; then
-    echo "✅ Work pool '${POOL_NAME}' already exists."
-else
-    echo "Creating work pool '${POOL_NAME}' (type: ${POOL_TYPE})..."
-    $EXEC_PREFIX uv run prefect work-pool create "$POOL_NAME" --type "$POOL_TYPE"
+for POOL_NAME in "polydispute-local" "polydispute-dev"; do
+    echo "Ensuring Prefect work pool '${POOL_NAME}' (type: docker) exists..."
+    
+    # Delete existing pool if it was created as type process previously
+    $EXEC_PREFIX uv run prefect work-pool delete "$POOL_NAME" 2>/dev/null || true
+    
+    echo "Creating work pool '${POOL_NAME}' (type: docker)..."
+    $EXEC_PREFIX uv run prefect work-pool create "$POOL_NAME" --type docker
     echo "✅ Work pool '${POOL_NAME}' created successfully!"
-fi
-
-echo ""
-echo "🚀 Starting local Prefect worker for '${POOL_NAME}' (Press Ctrl+C to stop)..."
-$EXEC_PREFIX uv run prefect worker start --pool "$POOL_NAME"
+    echo ""
+done

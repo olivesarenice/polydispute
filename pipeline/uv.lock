@@ -2478,6 +2478,7 @@ dependencies = [
     { name = "pmxt" },
     { name = "polars" },
     { name = "prefect" },
+    { name = "prefect-docker" },
     { name = "pydantic" },
     { name = "requests" },
     { name = "sentry-sdk", extra = ["fastapi"] },
@@ -2502,6 +2503,7 @@ requires-dist = [
     { name = "pmxt", specifier = ">=2.23.0" },
     { name = "polars", specifier = ">=1.39.3" },
     { name = "prefect", specifier = ">=3.8.3" },
+    { name = "prefect-docker", specifier = ">=0.6.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "requests", specifier = ">=2.33.1" },
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.0.0" },
@@ -2578,6 +2580,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/21/c4/2f71f739e4aac02371b8fa9823eab4f46f5fe260e06b2e002040f04d71db/prefect-3.8.3.tar.gz", hash = "sha256:6b7d67bd355841d28f2df121ef08e2718f43b2fed5879f688eab075f957d37c3", size = 14500668, upload-time = "2026-08-13T19:09:32.001Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c5/82/af225ef25e11a1d110c453a6dcde3fc9ffb01839882087de00820e3c7191/prefect-3.8.3-py3-none-any.whl", hash = "sha256:be35df044a0f5f1def0e2e9e53291fc470a44898198d65bf6737098ae63f6d78", size = 15441005, upload-time = "2026-08-13T19:09:29.025Z" },
+]
+
+[[package]]
+name = "prefect-docker"
+version = "0.7.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "docker" },
+    { name = "exceptiongroup" },
+    { name = "prefect" },
+    { name = "python-on-whales" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/71/0d/3cca530e35ecfa604d519e203721ce55ca702b900bbb5532ffea89bf3d2f/prefect_docker-0.7.3.tar.gz", hash = "sha256:be9e826343e0128f8d4a35ec6411e3af7866474bedb0c493ad150c2c503c7e13", size = 48384, upload-time = "2026-07-15T18:15:53.542Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5f/be/96281100923c9c09927ab1cf5768fd573475b2f4d3f86252faa8f1f21836/prefect_docker-0.7.3-py3-none-any.whl", hash = "sha256:6c0106e0c8284b72ee54ee65ccd4efa3c4ca3205d8b5c65d647d30423aefa968", size = 32263, upload-time = "2026-07-15T18:15:52.424Z" },
 ]
 
 [[package]]
@@ -3041,6 +3058,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f7/ff/3cc9165fd44106973cd7ac9facb674a65ed853494592541d339bdc9a30eb/python_json_logger-4.1.0.tar.gz", hash = "sha256:b396b9e3ed782b09ff9d6e4f1683d46c83ad0d35d2e407c09a9ebbf038f88195", size = 17573, upload-time = "2026-03-29T04:39:56.805Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/27/be/0631a861af4d1c875f096c07d34e9a63639560a717130e7a87cbc82b7e3f/python_json_logger-4.1.0-py3-none-any.whl", hash = "sha256:132994765cf75bf44554be9aa49b06ef2345d23661a96720262716438141b6b2", size = 15021, upload-time = "2026-03-29T04:39:55.266Z" },
+]
+
+[[package]]
+name = "python-on-whales"
+version = "0.81.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e9/81/4b545de811e41ff90762a1c7045fcae215f20f4114eebddedab8eab6f63e/python_on_whales-0.81.0.tar.gz", hash = "sha256:bb6172014e3fe949f908092748bddf34df758cb92c2c3d0536b75bf236abce1b", size = 115066, upload-time = "2026-03-09T14:17:43.534Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a9/cb/5049e041a1d0e6f6cb6ac8737a8215fb4e67cb147f140ef31e67361dc61a/python_on_whales-0.81.0-py3-none-any.whl", hash = "sha256:6d5f81f56d0f95fd311a7cce29a01a1a60841074e4936000dc5f2dc9a7ffafac", size = 119240, upload-time = "2026-03-09T14:17:42.195Z" },
 ]
 
 [[package]]
