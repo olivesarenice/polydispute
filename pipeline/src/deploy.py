@@ -58,7 +58,7 @@ if __name__ == "__main__":
         ).deploy(
             name=deployment_name,
             work_pool_name=pool_name,
-            cron="0 */4 * * *",
+            cron="0 * * * *",
         )
 
     print(f"✅ Deployment [{deployment_name}] successfully registered!")
