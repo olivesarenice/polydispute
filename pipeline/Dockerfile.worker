@@ -9,13 +9,13 @@ ENV DOPPLER_CONFIG=dev
 # Enable bytecode compilation for performance
 ENV UV_COMPILE_BYTECODE=1
 
-# 1. Install Doppler CLI with apt cache mounting
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends curl gnupg && \
-    curl -sLf --retry 3 https://packages.doppler.com/public/cli/gpg.45887C70B10F3642.key | gpg --dearmor -o /usr/share/keyrings/doppler-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/doppler-archive-keyring.gpg] https://packages.doppler.com/public/cli/deb/debian any-version main" | tee /etc/apt/sources.list.d/doppler-cli.list && \
-    apt-get update && apt-get install -y --no-install-recommends doppler
+# 1. Install Doppler CLI
+RUN apt-get update && apt-get install -y apt-transport-https ca-certificates curl gnupg && \
+    mkdir -p /etc/apt/keyrings && \
+    curl -sLf --retry 3 --tlsv1.2 --proto "=https" 'https://packages.doppler.com/public/cli/gpg.DE2A7741A397C129.key' | gpg --dearmor -o /etc/apt/keyrings/doppler.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/doppler.gpg] https://packages.doppler.com/public/cli/deb/debian any-version main" | tee /etc/apt/sources.list.d/doppler-cli.list && \
+    apt-get update && \
+    apt-get -y install doppler
 
 # 2. Copy the uv binary directly from the official astral image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
