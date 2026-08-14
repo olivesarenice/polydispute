@@ -19,14 +19,16 @@ else
     EXEC_PREFIX=""
 fi
 
-for POOL_NAME in "polydispute-local" "polydispute-dev"; do
-    echo "Ensuring Prefect work pool '${POOL_NAME}' (type: docker) exists..."
-    
-    # Delete existing pool if it was created as type process previously
-    $EXEC_PREFIX uv run prefect work-pool delete "$POOL_NAME" 2>/dev/null || true
-    
-    echo "Creating work pool '${POOL_NAME}' (type: docker)..."
-    $EXEC_PREFIX uv run prefect work-pool create "$POOL_NAME" --type docker
-    echo "✅ Work pool '${POOL_NAME}' created successfully!"
-    echo ""
-done
+# 1. Local Pool: Type docker (spins up local docker containers via OrbStack on Mac)
+echo "Ensuring Prefect work pool 'polydispute-local' (type: docker) exists..."
+$EXEC_PREFIX uv run prefect work-pool delete "polydispute-local" 2>/dev/null || true
+$EXEC_PREFIX uv run prefect work-pool create "polydispute-local" --type docker
+echo "✅ Work pool 'polydispute-local' (type: docker) ready!"
+echo ""
+
+# 2. Remote Dev Pool: Type process (executes directly inside the Coolify container)
+echo "Ensuring Prefect work pool 'polydispute-dev' (type: process) exists..."
+$EXEC_PREFIX uv run prefect work-pool delete "polydispute-dev" 2>/dev/null || true
+$EXEC_PREFIX uv run prefect work-pool create "polydispute-dev" --type process
+echo "✅ Work pool 'polydispute-dev' (type: process) ready!"
+echo ""

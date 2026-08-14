@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+.envrc
+.venv
+.git
+data/
+plans/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store

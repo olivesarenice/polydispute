@@ -11,8 +11,8 @@ ENV UV_COMPILE_BYTECODE=1
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app/src:$PYTHONPATH"
 
-# 1. Install Doppler CLI
-RUN apt-get update && apt-get install -y apt-transport-https ca-certificates curl gnupg && \
+# 1. Install Doppler CLI & Git
+RUN apt-get update && apt-get install -y apt-transport-https ca-certificates curl gnupg git && \
     mkdir -p /etc/apt/keyrings && \
     curl -sLf --retry 3 --tlsv1.2 --proto "=https" 'https://packages.doppler.com/public/cli/gpg.DE2A7741A397C129.key' | gpg --dearmor -o /etc/apt/keyrings/doppler.gpg && \
     echo "deb [signed-by=/etc/apt/keyrings/doppler.gpg] https://packages.doppler.com/public/cli/deb/debian any-version main" | tee /etc/apt/sources.list.d/doppler-cli.list && \
