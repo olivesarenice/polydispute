@@ -15,7 +15,6 @@ dependencies = [
     "pmxt>=2.23.0",
     "polars>=1.39.3",
     "pydantic>=2.12.5",
-    "python-dotenv>=1.2.2",
     "requests>=2.33.1",
     "sentry-sdk[fastapi]>=2.0.0",
     "tqdm>=4.67.3",
@@ -25,6 +24,7 @@ dependencies = [
     "xy",
     "plotext",
     "matplotlib",
+    "prefect>=3.8.3",
 ]
 
 

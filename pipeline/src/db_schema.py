@@ -371,6 +371,7 @@ TABLES = [
             "end_date": ("TIMESTAMPTZ", "ISO8601 scheduled market closing / question expiration date"),
             "closed_time": ("TIMESTAMPTZ", "ISO8601 timestamp when trading on Polymarket was closed"),
             "uma_end_date": ("TIMESTAMPTZ", "ISO8601 timestamp when UMA Oracle liveness expired / DVM vote completed and market formally resolved"),
+            "uma_resolution_status": ("VARCHAR", "UMA Oracle status ('proposed', 'disputed', 'resolved')"),
             "uma_question_id": ("VARCHAR", "UMA Oracle question ID"),
             "resolved_by": ("VARCHAR", "UMA CTF Adapter smart contract address that resolved the market"),
             **get_dw_columns(),

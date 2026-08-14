@@ -4,6 +4,40 @@ This directory contains the modular ELT (Extract, Load, Transform) data pipeline
 
 ---
 
+## 1. Developer Onboarding & Configuration Setup
+
+### Configuration Architecture
+- **Secrets Management**: Environment variables and secrets are centrally managed in **Doppler** (`polydispute` project). Secrets are never committed to Git or stored in static plaintext `.env` files.
+- **Local Dev Ingestion**: Uses `direnv` combined with `doppler` CLI. When you `cd` into `pipeline/`, secrets are dynamically injected into your shell's RAM.
+- **Production Workers**: Containerized in Coolify on Hetzner via `Dockerfile.worker`. Wrapped at container boot via `ENTRYPOINT ["doppler", "run", "--"]`.
+
+### First-Time Dev Setup CLI Steps
+
+```bash
+# 1. Install required CLI dependencies via Homebrew
+brew install uv dopplerhq/cli/doppler direnv
+
+# 2. Hook direnv into your shell (add to ~/.zshrc if not already present)
+echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc && source ~/.zshrc
+
+# 3. Authenticate with Doppler and link the project config
+doppler login
+cd pipeline
+doppler setup --project polydispute --config dev
+
+# 4. Create local .envrc for automatic direnv + doppler syncing
+echo 'eval "$(doppler secrets download --no-file --format env)"' > .envrc
+direnv allow
+
+# 5. Provision the local Prefect work pool and start worker
+./setup_pool.sh
+
+# 6. Register pipeline deployments to the Prefect server
+uv run python src/deploy.py
+```
+
+---
+
 ## 1. Incremental Pipeline Execution
 
 Run the four sequential phases in order for routine incremental pipeline execution:

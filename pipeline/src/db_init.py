@@ -3,10 +3,7 @@ import sys
 
 from db_schema import TABLES
 from db_utils import get_db_conn
-from dotenv import load_dotenv
 from loguru import logger
-
-load_dotenv()
 
 
 def initialize_database() -> None:

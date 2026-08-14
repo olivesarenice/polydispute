@@ -5,11 +5,7 @@ from typing import Any, Dict, List, Optional
 
 import duckdb
 import pyarrow as pa
-from dotenv import load_dotenv
 from loguru import logger
-
-# Automatically load environment variables from root .env
-load_dotenv()
 
 
 def get_db_conn(db_name: Optional[str] = None) -> duckdb.DuckDBPyConnection:

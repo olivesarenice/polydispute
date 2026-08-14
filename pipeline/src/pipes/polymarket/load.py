@@ -72,6 +72,7 @@ def clean_polymarket_stage(run_id: Optional[str] = None) -> None:
         end_date,
         closed_time,
         uma_end_date,
+        uma_resolution_status,
         uma_question_id,
         resolved_by
     FROM raw_pm_markets
