@@ -60,6 +60,7 @@ def clean_polymarket_stage(run_id: Optional[str] = None) -> None:
     SELECT 
         id AS market_id,
         question,
+        description,
         condition_id,
         slug,
         resolution_source,

@@ -198,20 +198,43 @@ def clean_discord_stage(run_id: Optional[str] = None) -> None:
         logger.info(f"Loaded {len(records_t)} records into clean_dc_threads")
 
     logger.info("Phase 1 Clean: Transforming raw_dc_messages into clean_dc_messages...")
-    query_m = "SELECT id as message_id, thread_id, author_username, timestamp, content FROM raw_dc_messages"
+    query_m = "SELECT id as message_id, thread_id, author_username, timestamp, content, embeds FROM raw_dc_messages"
     conn = get_db_conn()
     df_m = conn.execute(query_m).pl()
     conn.close()
 
     if not df_m.is_empty():
+        # Extract vote stance
         df_m = df_m.with_columns(
             pl.col("content")
             .str.extract(r"(?i)\b(P[1-4])\b", 1)
             .str.to_uppercase()
             .alias("vote_type")
         )
-        df_votes = df_m.filter(pl.col("vote_type").is_not_null()).drop("content")
+        # Filter for vote messages
+        df_votes = df_m.filter(pl.col("vote_type").is_not_null())
+
         if not df_votes.is_empty():
+            import re
+            url_pattern = re.compile(r"https?://[^\s<>\"']+")
+
+            def extract_urls(content: Optional[str], embeds: Optional[str]) -> list[str]:
+                found = []
+                if content:
+                    found.extend(url_pattern.findall(content))
+                if embeds:
+                    found.extend(url_pattern.findall(embeds))
+                return list(set(found))
+
+            urls_list = [
+                extract_urls(c, e)
+                for c, e in zip(df_votes["content"], df_votes["embeds"])
+            ]
+
+            df_votes = df_votes.with_columns(
+                pl.Series("urls", urls_list, dtype=pl.List(pl.String))
+            ).drop("embeds")
+
             records_m = df_votes.to_dicts()
             load_json_to_table("clean_dc_messages", records_m, pk="message_id", run_id=run_id)
             logger.info(f"Loaded {len(records_m)} records into clean_dc_messages")

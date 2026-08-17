@@ -358,6 +358,7 @@ TABLES = [
         columns={
             "market_id": ("VARCHAR", "Unique numeric market ID"),
             "question": ("VARCHAR", "Market proposition title"),
+            "description": ("VARCHAR", "Detailed market rules / fine print resolution criteria"),
             "condition_id": ("VARCHAR", "Gnosis CTF condition ID"),
             "slug": ("VARCHAR", "URL slug for market"),
             "resolution_source": ("VARCHAR", "Resolution source URL / text"),
@@ -402,6 +403,8 @@ TABLES = [
             "thread_id": ("VARCHAR", "Parent thread ID"),
             "author_username": ("VARCHAR", "Message author username"),
             "timestamp": ("TIMESTAMPTZ", "ISO8601 message timestamp"),
+            "content": ("VARCHAR", "Clean message text content"),
+            "urls": ("VARCHAR[]", "Extracted external news URLs from message content and embeds"),
             "vote_type": ("VARCHAR", "Extracted vote stance ('P1', 'P2', 'P3', 'P4')"),
             **get_dw_columns(),
         },
