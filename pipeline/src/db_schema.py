@@ -385,6 +385,7 @@ TABLES = [
         columns={
             "thread_id": ("VARCHAR", "Discord thread ID"),
             "market_id": ("VARCHAR", "Extracted Polymarket market_id foreign key"),
+            "assertion_id": ("VARCHAR", "Extracted UMA assertionId (0x hex bytes32) or request identifier"),
             "author_username": ("VARCHAR", "Thread starter username"),
             "timestamp": ("TIMESTAMPTZ", "ISO8601 timestamp when the dispute thread was initiated in Discord #disputes"),
             "content": ("VARCHAR", "Thread starter text content"),

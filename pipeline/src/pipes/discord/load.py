@@ -91,8 +91,8 @@ def clean_discord_stage(run_id: Optional[str] = None) -> None:
     except Exception as e:
         logger.debug(f"Slug-to-market_id map build notice: {e}")
 
-    query_threads = "SELECT id as thread_id, author_username, timestamp, content FROM raw_dc_threads"
-    query_messages = "SELECT thread_id, content FROM raw_dc_messages WHERE content LIKE '%market_id:%' OR content LIKE '%polymarket.com%'"
+    query_threads = "SELECT id as thread_id, author_username, timestamp, content, embeds FROM raw_dc_threads"
+    query_messages = "SELECT thread_id, content, embeds FROM raw_dc_messages WHERE content LIKE '%market_id:%' OR content LIKE '%polymarket.com%' OR content LIKE '%assertion%' OR content LIKE '%0x%'"
 
     df_threads = conn.execute(query_threads).pl()
     df_msgs = conn.execute(query_messages).pl()
@@ -100,8 +100,14 @@ def clean_discord_stage(run_id: Optional[str] = None) -> None:
 
     if not df_threads.is_empty():
         mid_mapping = {}
+        assertion_mapping = {}
         market_id_pattern = re.compile(r"market_id:\s*(\d+)")
         slug_pattern = re.compile(r"polymarket\.com/(?:event|market)/([a-zA-Z0-9_-]+)")
+        assertion_pattern = re.compile(
+            r"(?i)(?:assertion_?id|assertionId)[=: ]+\s*(0x[a-fA-F0-9]{64}|[a-fA-F0-9]{10,66})|"
+            r"oracle\.uma\.xyz/(?:request|assertion)[^\s\"'>]*(?:assertionId|id)=(0x[a-fA-F0-9]{64}|[0-9a-fA-F]{10,66})|"
+            r"\b(0x[a-fA-F0-9]{64})\b"
+        )
 
         def resolve_mid_from_text(text: str) -> Optional[str]:
             if not text:
@@ -117,13 +123,25 @@ def clean_discord_stage(run_id: Optional[str] = None) -> None:
                 return slug_to_mid.get(slug)
             return None
 
+        def resolve_assertion_id(text: str, embeds: str = "") -> Optional[str]:
+            combined = f"{text or ''} {embeds or ''}"
+            match = assertion_pattern.search(combined)
+            if match:
+                for g in match.groups():
+                    if g:
+                        return g
+            return None
+
         for row in df_msgs.to_dicts():
             t_id = row["thread_id"]
-            if t_id in mid_mapping:
-                continue
-            res_mid = resolve_mid_from_text(row.get("content", ""))
-            if res_mid:
-                mid_mapping[t_id] = res_mid
+            if t_id not in mid_mapping:
+                res_mid = resolve_mid_from_text(row.get("content", ""))
+                if res_mid:
+                    mid_mapping[t_id] = res_mid
+            if t_id not in assertion_mapping:
+                res_aid = resolve_assertion_id(row.get("content", ""), row.get("embeds", ""))
+                if res_aid:
+                    assertion_mapping[t_id] = res_aid
 
         for row in df_threads.to_dicts():
             t_id = row["thread_id"]
@@ -131,6 +149,10 @@ def clean_discord_stage(run_id: Optional[str] = None) -> None:
                 res_mid = resolve_mid_from_text(row.get("content", ""))
                 if res_mid:
                     mid_mapping[t_id] = res_mid
+            if t_id not in assertion_mapping:
+                res_aid = resolve_assertion_id(row.get("content", ""), row.get("embeds", ""))
+                if res_aid:
+                    assertion_mapping[t_id] = res_aid
 
         mid_df = pl.DataFrame(
             {
@@ -140,6 +162,14 @@ def clean_discord_stage(run_id: Optional[str] = None) -> None:
             schema={"thread_id": pl.String, "market_id": pl.String},
         )
 
+        aid_df = pl.DataFrame(
+            {
+                "thread_id": list(assertion_mapping.keys()),
+                "assertion_id": list(assertion_mapping.values()),
+            },
+            schema={"thread_id": pl.String, "assertion_id": pl.String},
+        )
+
         if not mid_df.is_empty():
             df_threads = df_threads.join(mid_df, on="thread_id", how="left")
         else:
@@ -147,9 +177,21 @@ def clean_discord_stage(run_id: Optional[str] = None) -> None:
                 pl.lit(None, dtype=pl.String).alias("market_id")
             )
 
+        if not aid_df.is_empty():
+            df_threads = df_threads.join(aid_df, on="thread_id", how="left")
+        else:
+            df_threads = df_threads.with_columns(
+                pl.lit(None, dtype=pl.String).alias("assertion_id")
+            )
+
+        # Drop embeds before writing to clean_dc_threads
+        if "embeds" in df_threads.columns:
+            df_threads = df_threads.drop("embeds")
+
         linked_count = df_threads.filter(pl.col("market_id").is_not_null()).height
+        aid_count = df_threads.filter(pl.col("assertion_id").is_not_null()).height
         total_count = len(df_threads)
-        logger.info(f"clean_dc_threads FK market_id coverage: {linked_count}/{total_count} linked.")
+        logger.info(f"clean_dc_threads: {linked_count}/{total_count} linked to market_id, {aid_count}/{total_count} extracted assertion_id.")
 
         records_t = df_threads.to_dicts()
         load_json_to_table("clean_dc_threads", records_t, pk="thread_id", run_id=run_id)
