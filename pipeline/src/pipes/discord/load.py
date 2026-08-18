@@ -215,7 +215,6 @@ def clean_discord_stage(run_id: Optional[str] = None) -> None:
         df_votes = df_m.filter(pl.col("vote_type").is_not_null())
 
         if not df_votes.is_empty():
-            import re
             url_pattern = re.compile(r"https?://[^\s<>\"']+")
 
             def extract_urls(content: Optional[str], embeds: Optional[str]) -> list[str]:
