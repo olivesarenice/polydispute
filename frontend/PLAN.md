@@ -14,7 +14,12 @@ Polydispute is an automated intelligence and arbitrage engine designed to detect
 
 ## 2. Mathematical Framework & Calibration Engine
 
-### A. Bayesian Voter Accuracy Score (S_u)
+### A. Entity Centralization on `market_id` (Latest Vote per User)
+Since Discord is our sole crowdsourced intelligence source, the entire engine centralizes strictly on **`market_id`** (not `thread_id`):
+- **Cross-Thread Stance Aggregation**: If multiple threads exist for the same market, each user's stance on that market is defined by their **most recent vote (`P1`, `P2`, `P3`, `P4`)** across all linked threads.
+- **Deduplication**: Each unique user contributes **exactly 1 active vote** to the market's live EV and is graded **exactly 1 time per market** on the calibration leaderboard.
+
+### B. Bayesian Voter Accuracy Score (S_u)
 Raw vote counts are distorted by noisy or uncalibrated retail participants. Each voter's reliability is scored using an Empirical Bayes prior:
 
 ```
@@ -24,7 +29,7 @@ S_u = (Prior_P * N + Correct_Predictions) / (N + Gradeable_Predictions)
 - **Trust Number (N = 20)**: Sample size threshold required to pull a voter away from the prior.
 - **Decisive Grading Only**: Only markets resolving decisively (`yes_price >= 0.99` or `no_price >= 0.99`) count toward voter calibration. 50-50 / Cancelled markets are excluded from penalizing voters.
 
-### B. Exponential Power Weighting Function (W_u)
+### C. Exponential Power Weighting Function (W_u)
 To reward elite forecasters and suppress low-accuracy noise, voter power weights scale exponentially:
 
 ```

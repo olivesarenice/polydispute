@@ -4,6 +4,7 @@ from pathlib import Path
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -50,28 +51,51 @@ init_views_if_needed()
 
 @st.cache_data(ttl=120)
 def load_disputed_markets():
-    """Query unique disputed markets with temporal clustered dispute rounds and thread counts."""
+    """Query unique disputed markets with centralized latest stance per user per market_id."""
     conn = get_db_conn()
     query = """
-    WITH thread_clusters AS (
-        SELECT 
-            market_id,
-            thread_id,
-            timestamp,
-            CASE 
-                WHEN timestamp - LAG(timestamp) OVER (PARTITION BY market_id ORDER BY timestamp ASC) > INTERVAL '36 hours' 
-                OR LAG(timestamp) OVER (PARTITION BY market_id ORDER BY timestamp ASC) IS NULL 
-                THEN 1 ELSE 0 
-            END AS is_new_dispute
-        FROM clean_dc_threads
-        WHERE market_id IS NOT NULL
-    ),
-    market_dispute_counts AS (
+    WITH market_thread_stats AS (
         SELECT 
             market_id,
             COUNT(DISTINCT thread_id) AS total_threads,
-            SUM(is_new_dispute) AS total_dispute_rounds
-        FROM thread_clusters
+            COUNT(DISTINCT COALESCE(assertion_id, thread_id)) AS total_dispute_rounds
+        FROM clean_dc_threads
+        WHERE market_id IS NOT NULL
+        GROUP BY market_id
+    ),
+    latest_market_threads AS (
+        SELECT 
+            market_id,
+            thread_id,
+            timestamp AS thread_created_at,
+            ROW_NUMBER() OVER (PARTITION BY market_id ORDER BY timestamp DESC) AS rn
+        FROM clean_dc_threads
+        WHERE market_id IS NOT NULL
+    ),
+    user_latest_votes AS (
+        SELECT 
+            lt.market_id,
+            msg.author_username,
+            msg.vote_type,
+            msg.timestamp,
+            ROW_NUMBER() OVER (PARTITION BY lt.market_id, msg.author_username ORDER BY msg.timestamp DESC) AS rn
+        FROM latest_market_threads lt
+        JOIN clean_dc_messages msg ON lt.thread_id = msg.thread_id
+        WHERE lt.rn = 1
+          AND msg.vote_type IN ('P1', 'P2', 'P3', 'P4')
+          AND msg.author_username NOT IN ('UMA Herald', 'UMA Heralds')
+          AND LOWER(msg.author_username) NOT LIKE '%herald%'
+    ),
+    market_vote_aggregations AS (
+        SELECT 
+            market_id,
+            COUNT(DISTINCT author_username) AS total_votes,
+            COUNT(CASE WHEN vote_type = 'P1' THEN 1 END) AS p1_votes,
+            COUNT(CASE WHEN vote_type = 'P2' THEN 1 END) AS p2_votes,
+            COUNT(CASE WHEN vote_type = 'P3' THEN 1 END) AS p3_votes,
+            COUNT(CASE WHEN vote_type = 'P4' THEN 1 END) AS p4_votes
+        FROM user_latest_votes
+        WHERE rn = 1
         GROUP BY market_id
     ),
     ur_latest AS (
@@ -99,26 +123,28 @@ def load_disputed_markets():
             WHEN ur.ur_answer IN ('P4', '4', 'EARLY', 'TOO_EARLY', 'CANCEL') THEN 'TOO EARLY'
             ELSE COALESCE(ur.ur_answer, 'N/A')
         END AS ur_committee_signal,
-        MIN(t.timestamp) AS dispute_start,
-        MAX(t.timestamp) AS latest_dispute_start,
+        MAX(t.timestamp) AS dispute_start,
+        MIN(t.timestamp) AS initial_dispute_start,
         m.closed_time,
         m.uma_end_date,
-        COUNT(msg.message_id) AS total_messages,
-        COUNT(CASE WHEN msg.vote_type IN ('P1', 'P2', 'P3', 'P4') THEN 1 END) AS total_votes,
-        COUNT(CASE WHEN msg.vote_type = 'P1' THEN 1 END) AS p1_votes,
-        COUNT(CASE WHEN msg.vote_type = 'P2' THEN 1 END) AS p2_votes,
-        COUNT(CASE WHEN msg.vote_type = 'P3' THEN 1 END) AS p3_votes,
-        COUNT(CASE WHEN msg.vote_type = 'P4' THEN 1 END) AS p4_votes
+        COUNT(DISTINCT msg.message_id) AS total_messages,
+        COALESCE(va.total_votes, 0) AS total_votes,
+        COALESCE(va.p1_votes, 0) AS p1_votes,
+        COALESCE(va.p2_votes, 0) AS p2_votes,
+        COALESCE(va.p3_votes, 0) AS p3_votes,
+        COALESCE(va.p4_votes, 0) AS p4_votes
     FROM clean_pm_markets m
     JOIN clean_dc_threads t ON m.market_id = t.market_id
-    LEFT JOIN market_dispute_counts dc ON m.market_id = dc.market_id
+    LEFT JOIN market_thread_stats dc ON m.market_id = dc.market_id
+    LEFT JOIN market_vote_aggregations va ON m.market_id = va.market_id
     LEFT JOIN ur_latest ur ON (LOWER(TRIM(m.question)) = LOWER(TRIM(ur.question)) OR ur.ancillary_data LIKE '%' || m.market_id || '%') AND ur.rn = 1
     LEFT JOIN clean_dc_messages msg ON t.thread_id = msg.thread_id AND msg.author_username NOT IN ('UMA Herald', 'UMA Heralds')
     GROUP BY 
         m.market_id, m.question, m.uma_resolution_status, m.closed, 
         m.yes_price, m.no_price, dc.total_dispute_rounds, dc.total_threads,
+        va.total_votes, va.p1_votes, va.p2_votes, va.p3_votes, va.p4_votes,
         ur.ur_answer, m.closed_time, m.uma_end_date
-    ORDER BY MIN(t.timestamp) DESC;
+    ORDER BY MAX(t.timestamp) DESC;
     """
     try:
         df = conn.execute(query).df()
@@ -128,26 +154,32 @@ def load_disputed_markets():
 
 
 @st.cache_data(ttl=120)
-def load_market_dispute_rounds(market_id: str, max_gap_hours: float = 36.0):
+def load_market_dispute_rounds(market_id: str):
     """
-    Groups all Discord messages across threads for a market into distinct Dispute Rounds
-    using temporal clustering (gap > 36 hours indicates a new dispute round).
+    Groups Discord messages for a market into distinct Dispute Rounds
+    based on distinct thread/assertion entities.
     """
     conn = get_db_conn()
     query = f"""
     SELECT 
         t.thread_id,
         t.market_id,
+        t.assertion_id,
+        t.timestamp AS thread_created_at,
         m.message_id,
         m.author_username,
         m.timestamp,
-        m.vote_type
+        m.vote_type,
+        m.content,
+        m.urls
     FROM clean_dc_threads t
-    JOIN clean_dc_messages m ON t.thread_id = m.thread_id
+    LEFT JOIN clean_dc_messages m ON t.thread_id = m.thread_id
     WHERE t.market_id = '{market_id}'
-      AND m.author_username NOT IN ('UMA Herald', 'UMA Heralds')
-      AND LOWER(m.author_username) NOT LIKE '%herald%'
-    ORDER BY m.timestamp ASC;
+      AND (m.author_username IS NULL OR (
+           m.author_username NOT IN ('UMA Herald', 'UMA Heralds')
+           AND LOWER(m.author_username) NOT LIKE '%herald%'
+      ))
+    ORDER BY t.timestamp ASC, m.timestamp ASC;
     """
     try:
         df = conn.execute(query).df()
@@ -155,26 +187,30 @@ def load_market_dispute_rounds(market_id: str, max_gap_hours: float = 36.0):
             return pd.DataFrame(), []
 
         df["timestamp"] = pd.to_datetime(df["timestamp"])
-        df = df.sort_values("timestamp").reset_index(drop=True)
+        df["thread_created_at"] = pd.to_datetime(df["thread_created_at"])
 
-        # Calculate time gap between consecutive dispute messages
-        df["gap_hours"] = df["timestamp"].diff().dt.total_seconds() / 3600.0
-        df["is_new_round"] = (df["gap_hours"] > max_gap_hours) | df["gap_hours"].isna()
-        df["round_num"] = df["is_new_round"].cumsum()
+        # Group by thread_id ordered by thread creation time to assign round numbers
+        unique_threads = df.sort_values("thread_created_at")["thread_id"].unique()
+        thread_to_round = {tid: idx + 1 for idx, tid in enumerate(unique_threads)}
+        df["round_num"] = df["thread_id"].map(thread_to_round)
 
         rounds_summary = []
         for r_num, group in df.groupby("round_num"):
-            r_start = group["timestamp"].min()
-            r_end = group["timestamp"].max()
+            r_start = group["thread_created_at"].iloc[0]
+            valid_msg_ts = group["timestamp"].dropna()
+            r_end = valid_msg_ts.max() if not valid_msg_ts.empty else (r_start + pd.Timedelta(hours=48))
             threads = sorted(list(group["thread_id"].unique()))
             total_votes = len(group[group["vote_type"].isin(["P1", "P2", "P3", "P4"])])
-            unique_voters = group["author_username"].nunique()
+            unique_voters = group["author_username"].dropna().nunique()
+            assertion_ids = group["assertion_id"].dropna().unique()
+            assertion_str = assertion_ids[0] if len(assertion_ids) > 0 else None
 
             rounds_summary.append({
                 "round_num": int(r_num),
                 "round_start": r_start,
                 "round_end": r_end,
                 "thread_ids": threads,
+                "assertion_id": assertion_str,
                 "total_votes": total_votes,
                 "unique_voters": unique_voters,
             })
@@ -294,6 +330,22 @@ consensus_aggregation = st.sidebar.radio(
     help="Whether multiple messages from the same user update their stance or accumulate as independent votes.",
 )
 
+st.sidebar.divider()
+st.sidebar.subheader("Voter Accuracy Exclusion Filter")
+min_accuracy_filter = st.sidebar.slider(
+    "Min Voter Accuracy (%)",
+    min_value=0,
+    max_value=95,
+    value=0,
+    step=5,
+    help="Automatically excludes any voter whose historical accuracy is below this threshold from consensus EV calculations and time-series charts.",
+)
+min_accuracy_type = st.sidebar.selectbox(
+    "Accuracy Filter Metric",
+    ["Bayesian Accuracy (Recommended)", "Raw Lifetime Accuracy"],
+    help="Whether to filter based on smoothed Empirical Bayes accuracy or raw historical win rate.",
+)
+
 # ==============================================================================
 # TAB 1: MARKET INFORMATION & ARBITRAGE
 # ==============================================================================
@@ -308,29 +360,44 @@ if tab_selection.startswith("📊 Market Information"):
         st.warning("No disputed markets found in the database.")
         st.stop()
 
-    # Build User Bayesian Score lookup map
-    user_score_map = {}
+    # Build User Bayesian Score and Raw Accuracy lookup maps
+    user_b_score_map = {}
+    user_raw_acc_map = {}
     if not users_raw_df.empty:
         for _, u_row in users_raw_df.iterrows():
             uname = u_row["author_username"]
             g_preds = u_row["gradeable_predictions"] or 0
             c_preds = u_row["correct_predictions"] or 0.0
+            raw_acc = u_row.get("lifetime_accuracy")
             # S = (P * N + C) / (N + G)
             b_score = ((prior_score * trust_number) + c_preds) / (trust_number + g_preds)
-            user_score_map[uname] = b_score
+            user_b_score_map[uname] = b_score
+            user_raw_acc_map[uname] = float(raw_acc) if pd.notnull(raw_acc) else prior_score
+
+    def is_user_eligible(username: str) -> bool:
+        """Checks if a user satisfies the minimum accuracy filter threshold."""
+        if min_accuracy_filter <= 0:
+            return True
+        if min_accuracy_type.startswith("Bayesian"):
+            acc = user_b_score_map.get(username, prior_score) * 100.0
+        else:
+            acc = user_raw_acc_map.get(username, prior_score) * 100.0
+        return acc >= float(min_accuracy_filter)
 
     def get_user_power(username: str) -> tuple[float, float]:
         """Returns (bayesian_score, power_weight)."""
-        score = user_score_map.get(username, prior_score)
+        score = user_b_score_map.get(username, prior_score)
         power = score ** power_exponent
         return score, power
 
-    # --- Compute Market-Level Live Spread & Ground Truth ---
+    # --- Compute Market-Level Live Spread, Ground Truth & Lifecycle State ---
     def classify_ground_truth(row):
         closed = bool(row.get("closed", False))
         p_yes = row.get("yes_price")
         p_no = row.get("no_price")
         status = str(row.get("uma_resolution_status", "")).lower()
+        ur_sig = str(row.get("ur_committee_signal", "")).upper()
+        d_start = row.get("dispute_start")
 
         if pd.isna(p_yes):
             return "PENDING / UNKNOWN"
@@ -338,14 +405,27 @@ if tab_selection.startswith("📊 Market Information"):
         p_yes = float(p_yes)
         p_no = float(p_no) if pd.notnull(p_no) else (1.0 - p_yes)
 
-        # Source A Ground Truth Rules (Polymarket Terminal Settlement)
+        # 1. Source A Ground Truth Rules (Polymarket Terminal Settlement)
         if p_yes >= 0.99:
             return "P2 (YES)"
         elif p_no >= 0.99 or p_yes <= 0.01:
             return "P1 (NO)"
         elif 0.48 <= p_yes <= 0.52 and (closed or status == "resolved"):
             return "P3 (50-50)"
-        elif closed or status == "resolved":
+
+        # 2. UMA Rocks Explicit P4 / Too Early Verdict
+        if ur_sig in ["TOO EARLY", "P4", "CANCEL", "EARLY"]:
+            return "P4 (Too Early)"
+
+        # 3. Dispute Window Expiry (> 48h since dispute thread started)
+        if pd.notnull(d_start):
+            d_ts = pd.to_datetime(d_start)
+            now_utc = pd.Timestamp.now(tz=d_ts.tzinfo if d_ts.tzinfo else None)
+            hours_since = (now_utc - d_ts).total_seconds() / 3600.0
+            if hours_since > 48.0 and not closed and (0.01 < p_yes < 0.99):
+                return "P4 (Too Early)"
+
+        if closed or status == "resolved":
             if p_yes > 0.60:
                 return "P2 (YES)"
             elif p_yes < 0.40:
@@ -354,6 +434,44 @@ if tab_selection.startswith("📊 Market Information"):
                 return "P3 (50-50)"
         else:
             return "OPEN / PENDING"
+
+    def classify_dispute_state(row):
+        p_yes = row.get("yes_price")
+        p_no = row.get("no_price")
+        closed = bool(row.get("closed", False))
+        status = str(row.get("uma_resolution_status", "")).lower()
+        ur_sig = str(row.get("ur_committee_signal", "")).upper()
+        d_start = row.get("dispute_start")
+
+        if pd.notnull(p_yes):
+            p_yes = float(p_yes)
+            if p_yes >= 0.99:
+                return "Resolved (YES - P2)"
+            elif p_yes <= 0.01 or (pd.notnull(p_no) and float(p_no) >= 0.99):
+                return "Resolved (NO - P1)"
+            elif 0.48 <= p_yes <= 0.52 and (closed or status == "resolved"):
+                return "Resolved (50-50 - P3)"
+
+        if ur_sig in ["TOO EARLY", "P4", "CANCEL", "EARLY"]:
+            return "Settled (Too Early - P4)"
+
+        if pd.notnull(d_start):
+            d_ts = pd.to_datetime(d_start)
+            now_utc = pd.Timestamp.now(tz=d_ts.tzinfo if d_ts.tzinfo else None)
+            hours_since = (now_utc - d_ts).total_seconds() / 3600.0
+            if hours_since > 48.0 and not closed and (pd.isna(p_yes) or (0.01 < float(p_yes) < 0.99)):
+                return "Settled (Too Early - P4)"
+            elif hours_since <= 48.0:
+                return "⚡ Live Active Dispute (≤ 48h)"
+
+        if status == "disputed":
+            return "⚡ Live Active Dispute (≤ 48h)"
+        elif status == "proposed":
+            return "Proposed"
+        elif closed or status == "resolved":
+            return "Resolved (Historical)"
+        else:
+            return "Open Trading"
 
     def classify_predominant_vote(row):
         p1 = row.get("p1_votes", 0) or 0
@@ -404,6 +522,7 @@ if tab_selection.startswith("📊 Market Information"):
     markets_df["arb_action"] = [m[2] for m in spread_metrics]
 
     markets_df["ground_truth"] = [classify_ground_truth(r) for _, r in markets_df.iterrows()]
+    markets_df["dispute_state"] = [classify_dispute_state(r) for _, r in markets_df.iterrows()]
     markets_df["predominant_vote"] = [classify_predominant_vote(r) for _, r in markets_df.iterrows()]
 
     def classify_ev_call(ev):
@@ -527,17 +646,19 @@ if tab_selection.startswith("📊 Market Information"):
     st.subheader("2. Disputed Threads & Arbitrage Catalog")
 
     # Filter controls
-    col_f1, col_f2, col_f3, col_f4 = st.columns([2, 1, 1, 1])
+    col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns([2, 1.3, 1, 1, 0.8])
     with col_f1:
         search_query = st.text_input("🔍 Search Question or Market ID", "")
     with col_f2:
-        status_filter = st.selectbox(
-            "Resolution Status",
-            ["All"] + sorted(list(markets_df["uma_resolution_status"].dropna().unique())),
+        state_filter = st.selectbox(
+            "Dispute Lifecycle State",
+            ["All"] + sorted(list(markets_df["dispute_state"].dropna().unique())),
         )
     with col_f3:
-        only_arb = st.checkbox("🟢 Arbitrage Only (Spread > 0)", value=False)
+        only_live_disputes = st.checkbox("⚡ Live Only (≤ 48h)", value=False, help="Filter to only markets where dispute window started within the past 48 hours.")
     with col_f4:
+        only_arb = st.checkbox("🟢 Arbitrage Only (Spread > 0)", value=False)
+    with col_f5:
         min_votes_filter = st.number_input("Min Votes", min_value=0, value=0, step=1)
 
     filtered_df = markets_df.copy()
@@ -546,8 +667,10 @@ if tab_selection.startswith("📊 Market Information"):
             filtered_df["question"].str.contains(search_query, case=False, na=False)
             | filtered_df["market_id"].str.contains(search_query, case=False, na=False)
         ]
-    if status_filter != "All":
-        filtered_df = filtered_df[filtered_df["uma_resolution_status"] == status_filter]
+    if state_filter != "All":
+        filtered_df = filtered_df[filtered_df["dispute_state"] == state_filter]
+    if only_live_disputes:
+        filtered_df = filtered_df[filtered_df["dispute_state"].str.contains("Live", case=False, na=False)]
     if only_arb:
         filtered_df = filtered_df[filtered_df["arb_spread"] > 0]
     if min_votes_filter > 0:
@@ -562,8 +685,8 @@ if tab_selection.startswith("📊 Market Information"):
         [
             "market_id",
             "question",
+            "dispute_state",
             "ground_truth",
-            "uma_resolution_status",
             "ur_committee_signal",
             "yes_price",
             "crowd_ev",
@@ -644,7 +767,7 @@ if tab_selection.startswith("📊 Market Information"):
     # Key Metrics Cards
     m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
     m_col1.metric("Market ID", selected_market_id)
-    m_col2.metric("Resolution Status", str(selected_row["uma_resolution_status"]).upper())
+    m_col2.metric("Dispute State", str(selected_row.get("dispute_state", selected_row.get("uma_resolution_status", "N/A"))).upper())
     m_col3.metric("UR Committee Submit", str(selected_row.get("ur_committee_signal") or "N/A").upper())
     m_col4.metric(
         "Current YES / NO Price",
@@ -654,33 +777,43 @@ if tab_selection.startswith("📊 Market Information"):
     )
     m_col5.metric("Dispute Rounds", f"{total_rounds_count} Round(s)")
 
-    # Dispute Round Selector (if market was disputed multiple times)
-    if total_rounds_count > 1:
-        st.info(f"🔔 **Multi-Round Dispute Detected:** Temporal clustering identified **{total_rounds_count} separate dispute rounds** (>36h gap).")
-        round_choices = ["All Rounds (Combined Timeline)"] + [
-            f"Round {r['round_num']} ({r['round_start'].strftime('%Y-%m-%d %H:%M')} – {r['round_end'].strftime('%Y-%m-%d %H:%M')} | {r['total_votes']} votes | {len(r['thread_ids'])} thread(s))"
-            for r in rounds_summary
-        ]
-        selected_round_choice = st.radio(
-            "Select Dispute Round to Zoom In:",
-            round_choices,
-            horizontal=True,
-        )
-
-        if selected_round_choice.startswith("All Rounds"):
-            votes_df = all_msgs_df[all_msgs_df["vote_type"].isin(["P1", "P2", "P3", "P4"])].copy()
-            view_label = f"All {total_rounds_count} Rounds Combined"
-        else:
-            chosen_idx = round_choices.index(selected_round_choice) - 1
-            chosen_r = rounds_summary[chosen_idx]
-            votes_df = all_msgs_df[
-                (all_msgs_df["round_num"] == chosen_r["round_num"])
-                & all_msgs_df["vote_type"].isin(["P1", "P2", "P3", "P4"])
-            ].copy()
-            view_label = f"Dispute Round {chosen_r['round_num']}"
+    # Exclusively consider and process the LATEST dispute round
+    if rounds_summary:
+        latest_round = rounds_summary[-1]
+        latest_round_num = latest_round["round_num"]
+        votes_df = all_msgs_df[
+            (all_msgs_df["round_num"] == latest_round_num)
+            & all_msgs_df["vote_type"].isin(["P1", "P2", "P3", "P4"])
+        ].copy()
+        view_label = f"Dispute Round {latest_round_num} (Latest)"
     else:
+        latest_round = None
+        latest_round_num = 1
         votes_df = all_msgs_df[all_msgs_df["vote_type"].isin(["P1", "P2", "P3", "P4"])].copy() if not all_msgs_df.empty else pd.DataFrame()
         view_label = "Dispute Round 1"
+
+    if total_rounds_count > 1 and latest_round:
+        st.info(
+            f"🔔 **Multi-Round Dispute Detected ({total_rounds_count} Rounds):** "
+            f"Calculations, crowd EV, and trajectory curves are strictly displaying the **Latest Dispute Round (Round {latest_round_num})** "
+            f"started on {latest_round['round_start'].strftime('%Y-%m-%d %H:%M UTC')}"
+            + (f" (Assertion: `{latest_round['assertion_id'][:12]}...`)" if latest_round.get("assertion_id") else "")
+            + f" with {latest_round['total_votes']} votes."
+        )
+
+    # Apply Voter Accuracy Exclusion Filter
+    if not votes_df.empty and min_accuracy_filter > 0:
+        orig_votes_cnt = len(votes_df)
+        orig_users_cnt = votes_df["author_username"].nunique()
+        votes_df = votes_df[votes_df["author_username"].apply(is_user_eligible)].copy()
+        excluded_votes_cnt = orig_votes_cnt - len(votes_df)
+        remaining_users_cnt = votes_df["author_username"].nunique()
+        if excluded_votes_cnt > 0:
+            st.info(
+                f"🎯 **Accuracy Filter Active (≥ {min_accuracy_filter}% {min_accuracy_type}):** "
+                f"Retained **{remaining_users_cnt}/{orig_users_cnt} voters** ({len(votes_df)}/{orig_votes_cnt} votes). "
+                f"Excluded {excluded_votes_cnt} votes from voters below the accuracy threshold."
+            )
 
     with st.expander("Full Market Question & Metadata", expanded=False):
         st.write(f"**Question:** {selected_row['question']}")
@@ -810,6 +943,24 @@ if tab_selection.startswith("📊 Market Information"):
 
         consensus_ts_df = pd.DataFrame(records)
 
+        # Extend stepped time-series to latest price observation if available
+        if not consensus_ts_df.empty and not price_df.empty:
+            t_last_vote = consensus_ts_df["timestamp"].iloc[-1]
+            t_last_price = price_df["timestamp"].max()
+            if t_last_vote.tzinfo is None and t_last_price.tzinfo is not None:
+                t_last_vote_comp = t_last_vote.tz_localize("UTC")
+            else:
+                t_last_vote_comp = t_last_vote
+            if t_last_price.tzinfo is None and t_last_vote.tzinfo is not None:
+                t_last_price_comp = t_last_price.tz_localize("UTC")
+            else:
+                t_last_price_comp = t_last_price
+
+            if t_last_price_comp > t_last_vote_comp:
+                last_rec = consensus_ts_df.iloc[-1].to_dict()
+                last_rec["timestamp"] = t_last_price
+                consensus_ts_df = pd.concat([consensus_ts_df, pd.DataFrame([last_rec])], ignore_index=True)
+
     # --- Trajectory & Consensus Graphs (Stacked Vertical Layout) ---
     st.markdown("### 3. Trajectory & Consensus Graphs")
 
@@ -848,23 +999,26 @@ if tab_selection.startswith("📊 Market Information"):
                 if t_r_end.tzinfo is None and price_df["timestamp"].dt.tz is not None:
                     t_r_end = t_r_end.tz_localize("UTC")
 
-                shade_color = round_palette[idx % len(round_palette)]
-                line_color = line_palette[idx % len(line_palette)]
+                is_latest_r = (idx == len(rounds_summary) - 1)
+                shade_color = "#e53935" if is_latest_r else "#9e9e9e"
+                line_color = "#d32f2f" if is_latest_r else "#757575"
+                alpha_val = 0.22 if is_latest_r else 0.08
+                r_tag = "Latest" if is_latest_r else "Historical"
 
                 ax_top.axvspan(
                     t_r_start,
                     t_r_end,
                     color=shade_color,
-                    alpha=0.18,
-                    label=f"Dispute Round {r['round_num']} ({t_r_start.strftime('%m/%d %H:%M')} – {t_r_end.strftime('%m/%d %H:%M')})",
+                    alpha=alpha_val,
+                    label=f"Round {r['round_num']} ({r_tag}: {t_r_start.strftime('%m/%d %H:%M')} – {t_r_end.strftime('%m/%d %H:%M')})",
                 )
                 ax_top.axvline(
                     t_r_start,
                     color=line_color,
-                    linestyle="--",
-                    linewidth=1.8,
-                    alpha=0.85,
-                    label=f"Round {r['round_num']} Start",
+                    linestyle="-" if is_latest_r else ":",
+                    linewidth=2.0 if is_latest_r else 1.2,
+                    alpha=0.9 if is_latest_r else 0.6,
+                    label=f"Round {r['round_num']} Start ({r_tag})",
                 )
         elif pd.notnull(selected_row.get("dispute_start")):
             t_r_start = pd.to_datetime(selected_row["dispute_start"])
@@ -901,9 +1055,9 @@ if tab_selection.startswith("📊 Market Information"):
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # 2. Bottom Chart: Dispute Window Overlay (Solid Weighted + Dashed Raw + YES Price)
+    # 2. Bottom Chart: Dispute Window Overlay (Weighted Consensus + YES Price)
     power_label = "S²" if power_exponent == 2.0 else f"S^{power_exponent:g}"
-    st.markdown(f"#### 🗳️ 2. Dispute Window ({view_label}): Weighted (Solid — {power_label}) vs. Raw (Dashed - -) Consensus & YES Price Overlay")
+    st.markdown(f"#### 🗳️ 2. Dispute Window ({view_label}): Calibration-Weighted Consensus ({power_label}) & YES Price Overlay")
 
     if not has_votes:
         st.info("No DVM votes recorded in this thread yet.")
@@ -911,34 +1065,24 @@ if tab_selection.startswith("📊 Market Information"):
         fig_bot, ax_left = plt.subplots(figsize=(12, 5.2))
         ax_right = ax_left.twinx()  # Secondary y-axis for YES Price
 
-        # A. Plot Left Axis: Consensus Shares (%)
+        # A. Plot Left Axis: Calibration-Weighted Consensus Shares (%)
         for vt in vote_types:
             if consensus_ts_df[f"{vt}_raw_cnt"].iloc[-1] > 0:
                 final_w_pct = consensus_ts_df[f"{vt}_weighted_pct"].iloc[-1]
-                final_r_pct = consensus_ts_df[f"{vt}_raw_pct"].iloc[-1]
 
-                # Solid line for Bayesian Weighted Share
+                # Stepped line for Bayesian Weighted Share (updates at moment vote is cast)
                 ax_left.plot(
                     consensus_ts_df["timestamp"],
                     consensus_ts_df[f"{vt}_weighted_pct"],
                     color=colors[vt],
                     linestyle="-",
+                    drawstyle="steps-post",
                     linewidth=2.4,
                     label=f"{vote_labels[vt]} (Weighted: {final_w_pct:.1f}%)",
                 )
-                # Dashed line for Raw Unweighted Share
-                ax_left.plot(
-                    consensus_ts_df["timestamp"],
-                    consensus_ts_df[f"{vt}_raw_pct"],
-                    color=colors[vt],
-                    linestyle="--",
-                    linewidth=1.5,
-                    alpha=0.65,
-                    label=f"{vote_labels[vt]} (Raw: {final_r_pct:.1f}%)",
-                )
 
         ax_left.set_ylim(-5, 105)
-        ax_left.set_ylabel("Vote / Consensus Share (%)", color="#2c3e50", fontsize=11, fontweight="bold")
+        ax_left.set_ylabel("Weighted Consensus Share (%)", color="#2c3e50", fontsize=11, fontweight="bold")
         ax_left.set_xlabel("Time (UTC)", fontsize=10)
         ax_left.grid(True, linestyle="--", alpha=0.4)
 
@@ -984,37 +1128,45 @@ if tab_selection.startswith("📊 Market Information"):
         st.pyplot(fig_bot, bbox_inches="tight")
         plt.close(fig_bot)
 
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(f"#### 🎯 3. Unified Price & Crowd Implied Value (EV) Overlay ({view_label})")
         st.caption(
             "Direct comparison on a unified $0.00–$1.00 scale: "
-            "**Calibration-Weighted EV** (Solid Green) vs. **Raw EV** (Dashed Orange) vs. **Orderbook YES Price** (Solid Black). "
+            "**Calibration-Weighted EV** (Solid Green) vs. **Orderbook YES Price** (Solid Black). "
             "P4 (Too Early) votes contribute the point-in-time market YES price observed immediately prior to each vote."
         )
 
         final_w_ev = consensus_ts_df["weighted_implied_ev"].iloc[-1]
-        final_r_ev = consensus_ts_df["raw_implied_ev"].iloc[-1]
 
         fig_ev, ax_ev = plt.subplots(figsize=(12, 4.5))
 
-        # Line 1: Calibration-Weighted Crowd Implied EV
+        # Line 1: Calibration-Weighted Crowd Implied EV (Stepped Line)
         ax_ev.plot(
             consensus_ts_df["timestamp"],
             consensus_ts_df["weighted_implied_ev"],
             color="#2e7d32",
             linestyle="-",
+            drawstyle="steps-post",
             linewidth=2.5,
             label=f"Calibration-Weighted Implied EV ({power_label}): ${final_w_ev:.3f}",
+            zorder=3,
         )
 
-        # Line 2: Raw Unweighted Crowd Implied EV
-        ax_ev.plot(
-            consensus_ts_df["timestamp"],
-            consensus_ts_df["raw_implied_ev"],
-            color="#ff9800",
-            linestyle="--",
-            linewidth=1.8,
-            alpha=0.85,
-            label=f"Raw Unweighted Implied EV: ${final_r_ev:.3f}",
-        )
+        # Plot discrete marker dots at exact vote event timestamps
+        vote_ev_pts = consensus_ts_df.iloc[:-1] if len(consensus_ts_df) > 1 else consensus_ts_df
+        for _, pt in vote_ev_pts.iterrows():
+            vt = pt.get("vote_type")
+            uname = pt.get("author", "")
+            if vt in colors:
+                ax_ev.scatter(
+                    pt["timestamp"],
+                    pt["weighted_implied_ev"],
+                    color=colors[vt],
+                    s=40,
+                    edgecolors="#111",
+                    linewidth=0.8,
+                    zorder=5,
+                )
 
         # Line 3: Polymarket Orderbook YES Price
         if not price_df.empty:
@@ -1120,8 +1272,95 @@ if tab_selection.startswith("📊 Market Information"):
                     f"- **Weight Scheme:** {weighting_mode}"
                 )
 
-        # D. Detailed Vote Stream Expander
-        with st.expander("Show Detailed Vote Stream with Bayesian Weights", expanded=False):
+        st.divider()
+
+        # D. Voter Accuracy Distribution Dot Map (Who is backing each side)
+        st.markdown("#### 👥 4. Voter Accuracy Distribution Dot Map")
+        st.caption(
+            "Each dot represents an individual unique voter. Vertical position represents their historical Bayesian accuracy. "
+            f"Solid black bars indicate the **Power-Mean (RMS Average for {power_label})** accuracy of that cohort."
+        )
+
+        # Dedup to latest stance per user for the dot map
+        dot_df = votes_df.sort_values("timestamp").groupby("author_username").last().reset_index()
+
+        if not dot_df.empty:
+            fig_dot, ax_dot = plt.subplots(figsize=(10, 4.2))
+
+            import hashlib
+
+            def get_jitter(name: str) -> float:
+                h = int(hashlib.md5(name.encode("utf-8")).hexdigest()[:8], 16)
+                return ((h % 1000) / 500.0 - 1.0) * 0.16
+
+            x_indices = {vt: idx for idx, vt in enumerate(vote_types)}
+
+            for _, v_row in dot_df.iterrows():
+                vt = v_row["vote_type"]
+                if vt in x_indices:
+                    x_pos = x_indices[vt] + get_jitter(v_row["author_username"])
+                    y_pos = v_row["bayesian_score"] * 100.0
+                    ax_dot.scatter(
+                        x_pos,
+                        y_pos,
+                        s=25,
+                        color=colors[vt],
+                        alpha=0.85,
+                        edgecolors="#222222",
+                        linewidth=0.8,
+                        zorder=4,
+                    )
+
+            # Draw Power-Mean (RMS / Generalized Mean) accuracy bars and count annotations
+            p_exp = float(power_exponent)
+            for vt in vote_types:
+                x_idx = x_indices[vt]
+                cohort = dot_df[dot_df["vote_type"] == vt]
+                if not cohort.empty:
+                    # Generalized p-power mean matching the weighting exponent
+                    rms_acc = ((cohort["bayesian_score"] ** p_exp).mean() ** (1.0 / p_exp)) * 100.0
+                    ax_dot.hlines(
+                        rms_acc,
+                        x_idx - 0.28,
+                        x_idx + 0.28,
+                        colors="black",
+                        linewidth=2.5,
+                        linestyles="-",
+                        zorder=5,
+                    )
+                    ax_dot.text(
+                        x_idx,
+                        103,
+                        f"n={len(cohort)}\nAvg: {rms_acc:.1f}%",
+                        ha="center",
+                        va="bottom",
+                        fontsize=9,
+                        fontweight="bold",
+                        bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.85, edgecolor="#bbb"),
+                    )
+
+            ax_dot.axhline(
+                prior_score * 100.0,
+                color="#757575",
+                linestyle="--",
+                linewidth=1.2,
+                alpha=0.7,
+                label=f"Prior Baseline ({prior_score*100:.0f}%)",
+                zorder=2,
+            )
+
+            ax_dot.set_xticks(range(len(vote_types)))
+            ax_dot.set_xticklabels([vote_labels[vt] for vt in vote_types], fontsize=10, fontweight="bold")
+            ax_dot.set_ylabel("Voter Accuracy Score (%)", fontsize=10, fontweight="bold")
+            ax_dot.set_ylim(0, 118)
+            ax_dot.grid(axis="y", linestyle="--", alpha=0.4, zorder=1)
+            ax_dot.legend(loc="lower right", frameon=True, fontsize=8.5)
+
+            st.pyplot(fig_dot, bbox_inches="tight")
+            plt.close(fig_dot)
+
+        # E. Detailed Vote Stream Expander
+        with st.expander("Show Detailed Vote Data Table", expanded=False):
             st.dataframe(
                 votes_df[["timestamp", "author_username", "vote_type", "bayesian_score", "power_weight"]].rename(
                     columns={
@@ -1134,6 +1373,67 @@ if tab_selection.startswith("📊 Market Information"):
                 use_container_width=True,
                 hide_index=True,
             )
+
+        st.divider()
+
+        # F. Chronological Chat & Reasoning Stream
+        st.markdown("#### 💬 5. Dispute Chat & Vote Reasoning Stream")
+        st.caption("Chronological stream of Discord messages, reasoning, and evidence posted during this dispute round.")
+
+        msg_filter_col1, msg_filter_col2 = st.columns([1, 2])
+        with msg_filter_col1:
+            chat_vtype_filter = st.selectbox(
+                "Filter by Stance",
+                ["All Stances", "P1 (NO)", "P2 (YES)", "P3 (50-50)", "P4 (Too Early)"],
+            )
+        with msg_filter_col2:
+            chat_search = st.text_input("🔍 Search message content or author", "")
+
+        # Filter messages
+        chat_display_df = votes_df.copy() if not votes_df.empty else pd.DataFrame()
+        if not chat_display_df.empty:
+            if chat_vtype_filter != "All Stances":
+                selected_vt = chat_vtype_filter.split(" ")[0]
+                chat_display_df = chat_display_df[chat_display_df["vote_type"] == selected_vt]
+            if chat_search:
+                chat_display_df = chat_display_df[
+                    chat_display_df["author_username"].str.contains(chat_search, case=False, na=False)
+                    | chat_display_df["content"].fillna("").str.contains(chat_search, case=False, na=False)
+                ]
+
+            if chat_display_df.empty:
+                st.info("No messages match the current chat filter.")
+            else:
+                for _, m_row in chat_display_df.iterrows():
+                    vt = m_row["vote_type"]
+                    uname = m_row["author_username"]
+                    b_score = m_row.get("bayesian_score", 0.50)
+                    p_weight = m_row.get("power_weight", 0.25)
+                    msg_ts = m_row["timestamp"].strftime("%Y-%m-%d %H:%M UTC") if pd.notnull(m_row["timestamp"]) else "N/A"
+                    content_text = m_row.get("content") or "*(No text content provided)*"
+                    urls_list = m_row.get("urls")
+
+                    # Stance color pill
+                    v_badge = {
+                        "P1": "🔴 **P1 (NO)**",
+                        "P2": "🟢 **P2 (YES)**",
+                        "P3": "🟠 **P3 (50-50)**",
+                        "P4": "🟣 **P4 (Too Early)**",
+                    }.get(vt, f"⚪ **{vt}**")
+
+                    with st.chat_message(name=uname, avatar="⚖️"):
+                        st.markdown(
+                            f"**@{uname}** &nbsp;•&nbsp; {v_badge} &nbsp;•&nbsp; "
+                            f"Accuracy: `{b_score:.1%}` (Weight: `{p_weight:.3f}`) &nbsp;•&nbsp; "
+                            f"<span style='color:#757575;font-size:0.85em;'>{msg_ts}</span>",
+                            unsafe_allow_html=True,
+                        )
+                        st.markdown(f"> {content_text}")
+
+                        # Display clickable URL badges if present
+                        if urls_list is not None and isinstance(urls_list, (list, tuple)) and len(urls_list) > 0:
+                            links_md = " ".join([f"[🔗 `{u.split('//')[-1][:35]}...`]({u})" for u in urls_list if u])
+                            st.markdown(f"**Evidence & Links:** {links_md}")
 
 
 # ==============================================================================
@@ -1181,6 +1481,11 @@ elif tab_selection.startswith("👤 Voter Calibration"):
         min_gradeable = st.number_input("Min Gradeable Bets", min_value=0, value=0, step=1)
 
     display_df = users_df.copy()
+    if min_accuracy_filter > 0:
+        if min_accuracy_type.startswith("Bayesian"):
+            display_df = display_df[display_df["bayesian_acc_pct"] >= min_accuracy_filter]
+        else:
+            display_df = display_df[display_df["raw_acc_pct"] >= min_accuracy_filter]
     if u_search:
         display_df = display_df[
             display_df["author_username"].str.contains(u_search, case=False, na=False)
@@ -1217,6 +1522,124 @@ elif tab_selection.startswith("👤 Voter Calibration"):
         use_container_width=True,
         hide_index=True,
     )
+
+    st.divider()
+
+    # --- Cohort Accuracy Histogram & Exclusion Cutoff ---
+    st.subheader("📊 Voter Bayesian Accuracy Distribution (Cohort Histogram)")
+    st.caption(
+        "Distribution of Empirical Bayes accuracy across all voters with at least **X gradeable bets**. "
+        "The red shaded region highlights voters falling below the **Y% cutoff threshold**."
+    )
+
+    h_col1, h_col2 = st.columns(2)
+    with h_col1:
+        hist_min_bets = st.slider(
+            "Minimum Gradeable Bets (X)",
+            min_value=0,
+            max_value=30,
+            value=1,
+            step=1,
+            help="Filter cohort to only voters with at least X resolved predictions.",
+        )
+    with h_col2:
+        hist_cutoff = st.slider(
+            "Exclusion Threshold Cutoff (Y %)",
+            min_value=0,
+            max_value=100,
+            value=int(min_accuracy_filter) if min_accuracy_filter > 0 else 45,
+            step=5,
+            help="Demarcate and shade all voters with Bayesian accuracy below this threshold.",
+        )
+
+    # Filter cohort for histogram
+    hist_cohort = users_df[users_df["gradeable_predictions"] >= hist_min_bets].copy()
+
+    if hist_cohort.empty:
+        st.info(f"No voters found with at least {hist_min_bets} gradeable bets.")
+    else:
+        scores = hist_cohort["bayesian_acc_pct"].dropna().values
+        total_cohort_users = len(scores)
+        excluded_users = int(np.sum(scores < hist_cutoff))
+        qualified_users = total_cohort_users - excluded_users
+        pct_excluded = (excluded_users / total_cohort_users) * 100.0 if total_cohort_users > 0 else 0.0
+
+        fig_h, ax_h = plt.subplots(figsize=(10, 4.2))
+
+        # 30 Bins from 0 to 100%
+        bins = np.linspace(0, 100, 35)
+
+        # Plot histogram bars
+        n_vals, bins_out, patches = ax_h.hist(
+            scores,
+            bins=bins,
+            edgecolor="#222222",
+            linewidth=0.8,
+            zorder=3,
+        )
+
+        # Color patches: Red for < cutoff, Green for >= cutoff
+        for patch in patches:
+            bin_center = patch.get_x() + patch.get_width() / 2.0
+            if bin_center < hist_cutoff:
+                patch.set_facecolor("#e53935")  # Red
+                patch.set_alpha(0.75)
+            else:
+                patch.set_facecolor("#2e7d32")  # Green
+                patch.set_alpha(0.85)
+
+        # Draw Cutoff Line & Shading
+        ax_h.axvline(
+            hist_cutoff,
+            color="#b71c1c",
+            linestyle="--",
+            linewidth=2.2,
+            label=f"Cutoff Threshold: {hist_cutoff}%",
+            zorder=5,
+        )
+        ax_h.axvspan(
+            0,
+            hist_cutoff,
+            color="#ffcdd2",
+            alpha=0.35,
+            label=f"Excluded Region (< {hist_cutoff}%): {excluded_users} users ({pct_excluded:.1f}%)",
+            zorder=1,
+        )
+
+        # Prior Baseline Line
+        ax_h.axvline(
+            prior_score * 100.0,
+            color="#616161",
+            linestyle=":",
+            linewidth=1.5,
+            label=f"Prior Baseline ({prior_score*100:.0f}%)",
+            zorder=4,
+        )
+
+        ax_h.set_xlim(0, 100)
+        ax_h.set_xlabel("Empirical Bayes Accuracy (%)", fontsize=10, fontweight="bold")
+        ax_h.set_ylabel("Number of Voters", fontsize=10, fontweight="bold")
+        ax_h.grid(axis="y", linestyle="--", alpha=0.4, zorder=2)
+        ax_h.legend(loc="upper right", frameon=True, fontsize=8.5)
+
+        # Annotation summary badge
+        ax_h.text(
+            0.02,
+            0.95,
+            f"Cohort (≥ {hist_min_bets} bets): {total_cohort_users} voters\n"
+            f"• Qualified (≥ {hist_cutoff}%): {qualified_users} ({100-pct_excluded:.1f}%)\n"
+            f"• Excluded (< {hist_cutoff}%): {excluded_users} ({pct_excluded:.1f}%)\n"
+            f"• Mean: {np.mean(scores):.1f}% | Median: {np.median(scores):.1f}%",
+            transform=ax_h.transAxes,
+            verticalalignment="top",
+            fontsize=8.5,
+            fontweight="medium",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.9, edgecolor="#bbb"),
+            zorder=6,
+        )
+
+        st.pyplot(fig_h, bbox_inches="tight")
+        plt.close(fig_h)
 
     st.divider()
 

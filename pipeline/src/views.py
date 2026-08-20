@@ -16,47 +16,59 @@ def create_views(conn=None) -> None:
 
     logger.info("Initializing MotherDuck user profile calibration views & macros...")
 
-    # 1. Table-Valued Macro Function for parameterized / leak-free backtesting
+    # 1. Table-Valued Macro Function for parameterized / leak-free backtesting (Latest Stance per User per Market)
     macro_sql = """
     CREATE OR REPLACE MACRO fn_dc_user_profiles_as_of(as_of_ts) AS TABLE
+    WITH user_latest_market_stance AS (
+        SELECT 
+            t.market_id,
+            v.author_username,
+            v.vote_type,
+            v.timestamp,
+            ROW_NUMBER() OVER (PARTITION BY t.market_id, v.author_username ORDER BY v.timestamp DESC) AS rn
+        FROM clean_dc_messages v
+        JOIN clean_dc_threads t ON v.thread_id = t.thread_id
+        WHERE v.author_username NOT IN ('UMA Herald', 'UMA Heralds')
+          AND LOWER(v.author_username) NOT LIKE '%herald%'
+          AND t.market_id IS NOT NULL
+          AND v.timestamp <= TRY_CAST(as_of_ts AS TIMESTAMPTZ)
+    )
     SELECT 
-        v.author_username,
+        u.author_username,
         COUNT(*) AS total_predictions,
         COUNT(CASE 
-            WHEN v.vote_type IN ('P1', 'P2') 
-             AND (m.closed = true OR COALESCE(m.uma_resolution_status, '') = 'resolved') 
-             AND (m.yes_price > 0.99 OR m.no_price > 0.99) 
+            WHEN u.vote_type IN ('P1', 'P2') 
+             AND (m.closed = true OR COALESCE(m.uma_resolution_status, '') = 'resolved' OR m.yes_price >= 0.99 OR m.no_price >= 0.99 OR m.yes_price <= 0.01) 
+             AND (m.yes_price >= 0.99 OR m.no_price >= 0.99 OR m.yes_price <= 0.01) 
             THEN 1 
         END) AS gradeable_predictions,
         SUM(CASE 
-            WHEN (m.closed = true OR COALESCE(m.uma_resolution_status, '') = 'resolved') AND m.yes_price > 0.99 AND v.vote_type = 'P2' THEN 1
-            WHEN (m.closed = true OR COALESCE(m.uma_resolution_status, '') = 'resolved') AND m.no_price > 0.99 AND v.vote_type = 'P1' THEN 1
+            WHEN m.yes_price >= 0.99 AND u.vote_type = 'P2' THEN 1
+            WHEN (m.no_price >= 0.99 OR m.yes_price <= 0.01) AND u.vote_type = 'P1' THEN 1
             ELSE 0 
         END) AS correct_predictions,
         CAST(SUM(CASE 
-            WHEN (m.closed = true OR COALESCE(m.uma_resolution_status, '') = 'resolved') AND m.yes_price > 0.99 AND v.vote_type = 'P2' THEN 1
-            WHEN (m.closed = true OR COALESCE(m.uma_resolution_status, '') = 'resolved') AND m.no_price > 0.99 AND v.vote_type = 'P1' THEN 1
+            WHEN m.yes_price >= 0.99 AND u.vote_type = 'P2' THEN 1
+            WHEN (m.no_price >= 0.99 OR m.yes_price <= 0.01) AND u.vote_type = 'P1' THEN 1
             ELSE 0 
         END) AS DOUBLE) / NULLIF(COUNT(CASE 
-            WHEN v.vote_type IN ('P1', 'P2') 
-             AND (m.closed = true OR COALESCE(m.uma_resolution_status, '') = 'resolved') 
-             AND (m.yes_price > 0.99 OR m.no_price > 0.99) 
+            WHEN u.vote_type IN ('P1', 'P2') 
+             AND (m.closed = true OR COALESCE(m.uma_resolution_status, '') = 'resolved' OR m.yes_price >= 0.99 OR m.no_price >= 0.99 OR m.yes_price <= 0.01) 
+             AND (m.yes_price >= 0.99 OR m.no_price >= 0.99 OR m.yes_price <= 0.01) 
             THEN 1 
         END), 0) AS lifetime_accuracy,
         (COUNT(CASE 
-            WHEN v.vote_type IN ('P1', 'P2') 
-             AND (m.closed = true OR COALESCE(m.uma_resolution_status, '') = 'resolved') 
-             AND (m.yes_price > 0.99 OR m.no_price > 0.99) 
+            WHEN u.vote_type IN ('P1', 'P2') 
+             AND (m.closed = true OR COALESCE(m.uma_resolution_status, '') = 'resolved' OR m.yes_price >= 0.99 OR m.no_price >= 0.99 OR m.yes_price <= 0.01) 
+             AND (m.yes_price >= 0.99 OR m.no_price >= 0.99 OR m.yes_price <= 0.01) 
             THEN 1 
         END) >= 5) AS is_calibrated,
-        MAX(v.timestamp) AS last_voted_at
-    FROM clean_dc_messages v
-    JOIN clean_dc_threads t ON v.thread_id = t.thread_id
-    JOIN clean_pm_markets m ON t.market_id = m.market_id
-    WHERE v.author_username != 'UMA Herald'
-      AND v.timestamp <= TRY_CAST(as_of_ts AS TIMESTAMPTZ)
+        MAX(u.timestamp) AS last_voted_at
+    FROM user_latest_market_stance u
+    JOIN clean_pm_markets m ON u.market_id = m.market_id
+    WHERE u.rn = 1
       AND (m.closed_time IS NULL OR m.closed_time <= TRY_CAST(as_of_ts AS TIMESTAMPTZ))
-    GROUP BY v.author_username;
+    GROUP BY u.author_username;
     """
 
     # 2. Live View evaluated at current time now()

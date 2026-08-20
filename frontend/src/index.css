@@ -1,129 +1,100 @@
 @import "tailwindcss";
 
-/* ═══════════════════════════════════════════════════════════════
-   POLYDISPUTE — Phosphor Terminal Design System
-   Based on DATA_APP_TEMPLATE_1/STYLE_GUIDE.md
-   ═══════════════════════════════════════════════════════════════ */
-
 @theme {
-  --color-background: hsl(135 15% 12%);
-  --color-foreground: hsl(135 60% 55%);
+  --color-bg-main: #080c14;
+  --color-bg-card: #0e1524;
+  --color-bg-card-hover: #141f36;
+  --color-bg-subtle: #18233c;
+  --color-border-subtle: #1e293b;
+  --color-border-accent: #334155;
+  
+  --color-text-main: #f8fafc;
+  --color-text-muted: #94a3b8;
+  --color-text-dim: #64748b;
 
-  --color-card: hsl(135 15% 12%);
-  --color-card-foreground: hsl(135 60% 55%);
+  --color-brand-yes: #10b981;
+  --color-brand-no: #f43f5e;
+  --color-brand-p3: #f59e0b;
+  --color-brand-p4: #a855f7;
+  --color-brand-live: #06b6d4;
 
-  --color-primary: hsl(135 60% 55%);
-  --color-primary-foreground: hsl(135 15% 12%);
-
-  --color-secondary: hsl(135 20% 20%);
-  --color-secondary-foreground: hsl(135 60% 55%);
-
-  --color-muted: hsl(135 20% 20%);
-  --color-muted-foreground: hsl(135 40% 45%);
-
-  --color-accent: hsl(50 90% 70%);
-  --color-accent-foreground: hsl(135 15% 12%);
-
-  --color-destructive: hsl(0 84% 60%);
-  --color-destructive-foreground: hsl(210 40% 98%);
-
-  --color-border: hsl(135 40% 30%);
-  --color-input: hsl(135 40% 30%);
-  --color-ring: hsl(135 60% 55%);
-
-  /* Semantic colors for arb signals */
-  --color-edge-high: hsl(135 70% 50%);
-  --color-edge-mid: hsl(50 90% 60%);
-  --color-edge-low: hsl(135 30% 40%);
-  --color-danger: hsl(0 84% 60%);
-
-  --radius-sm: 0rem;
-  --radius-md: 0rem;
-  --radius-lg: 0rem;
-  --radius-xl: 0rem;
-
-  --font-mono: 'Courier New', Courier, monospace;
-  --font-serif: 'Times New Roman', Times, serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
-/* ─── Base ─────────────────────────────────────────────────── */
-
+/* Base Styles */
 * {
-  border-color: var(--color-border);
+  box-sizing: border-box;
+  border-color: #1e293b;
 }
 
 body {
-  background-color: var(--color-background);
-  color: var(--color-foreground);
-  font-family: var(--font-mono);
-  text-transform: uppercase;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  background-color: #080c14;
+  color: #f8fafc;
+  font-family: var(--font-sans);
   margin: 0;
   padding: 0;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
-h1, h2, h3, h4, h5, h6 {
-  font-family: var(--font-serif);
-  text-transform: lowercase;
-  letter-spacing: 0.05em;
-}
-
-/* ─── Scrollbar (phosphor aesthetic) ──────────────────────── */
-
+/* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
-
 ::-webkit-scrollbar-track {
-  background: var(--color-background);
+  background: #080c14;
 }
-
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+  background: #1e293b;
+  border-radius: 3px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-foreground);
+  background: #334155;
 }
 
-/* ─── Utilities ───────────────────────────────────────────── */
-
-.scanline {
-  pointer-events: none;
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0, 0, 0, 0.05) 2px,
-    rgba(0, 0, 0, 0.05) 4px
-  );
+/* One-directional Outward Ripple Animation */
+@keyframes ripple-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(6, 182, 212, 0.75);
+  }
+  65% {
+    box-shadow: 0 0 0 6px rgba(6, 182, 212, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(6, 182, 212, 0);
+  }
 }
 
-.glow-text {
-  text-shadow: 0 0 8px hsla(135, 60%, 55%, 0.4);
+.live-pulse-glow {
+  animation: ripple-pulse 1.8s cubic-bezier(0.24, 0, 0.38, 1) infinite;
 }
 
-/* Pulse animation for active status indicators */
-@keyframes pulse-glow {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+@keyframes highlight-flash {
+  0% {
+    background-color: rgba(16, 185, 129, 0.25);
+  }
+  100% {
+    background-color: transparent;
+  }
 }
 
-.pulse-glow {
-  animation: pulse-glow 2s ease-in-out infinite;
+.chat-highlight {
+  animation: highlight-flash 1.5s ease-out;
+  border-left: 3px solid #10b981 !important;
 }
 
-/* Fade-in for page load */
-@keyframes fade-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+/* Glassmorphic card styling */
+.glass-panel {
+  background: rgba(14, 21, 36, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid #1e293b;
 }
 
-.fade-in {
-  animation: fade-in 0.4s ease-out;
+.glass-panel-accent {
+  background: rgba(14, 21, 36, 0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid #06b6d4;
+  box-shadow: 0 0 20px -5px rgba(6, 182, 212, 0.15);
 }
