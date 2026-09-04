@@ -9,7 +9,7 @@ import {
   CartesianGrid,
   ReferenceLine
 } from "recharts";
-import { MessageSquare, ExternalLink, ChevronDown, ChevronUp } from "lucide-react";
+import { MessageSquare, ExternalLink, ChevronDown, ChevronUp, CircleSlash2 } from "lucide-react";
 import VoterDistributionChart from "./VoterDistributionChart";
 import MarkdownRenderer from "./MarkdownRenderer";
 import { formatUTC } from "./ScreenerTable";
@@ -282,10 +282,21 @@ export default function ConsensusReplayPanel({
         </div>
 
         {/* Line Chart Area */}
-        <div className="flex-1 w-full min-h-[250px] bg-slate-950/60 rounded-lg border border-slate-800 p-2">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData}>
-              <CartesianGrid yAxisId="left" strokeDasharray="3 3" stroke="#1e293b" horizontal={true} vertical={true} />
+        <div className="flex-1 w-full min-h-[250px] bg-slate-950/60 rounded-lg border border-slate-800 p-2 flex flex-col justify-center">
+          {chartData.length === 0 ? (
+            <div className="flex h-full min-h-[250px] flex-col items-center justify-center text-center p-6 space-y-2.5">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-800 bg-slate-900/80 text-slate-500 shadow-sm">
+                <CircleSlash2 className="h-5 w-5" />
+              </div>
+              <div className="space-y-0.5">
+                <p className="text-xs font-medium text-slate-300">No Chart Data Available</p>
+                <p className="text-[11px] font-mono text-slate-500">No price or consensus trajectory records for this market</p>
+              </div>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData}>
+                <CartesianGrid yAxisId="left" strokeDasharray="3 3" stroke="#1e293b" horizontal={true} vertical={true} />
                 
                 {/* X-Axis with Timestamps (DD MMM at 00:00 midnight ticks or interval ticks) */}
                 <XAxis
@@ -435,8 +446,9 @@ export default function ConsensusReplayPanel({
                 )}
               </LineChart>
             </ResponsiveContainer>
-          </div>
+          )}
         </div>
+      </div>
 
         {/* Right Side: Top Voter Dot Map + Bottom Chat Feed */}
         <div className="lg:col-span-5 flex flex-col gap-4 h-auto lg:h-[550px]">

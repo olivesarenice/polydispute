@@ -51,10 +51,6 @@ export default function VoterDistributionChart({
             <span className="inline-block h-2 w-2 rounded-full bg-slate-300 border border-slate-900" />
             <span>Voter's Past Accuracy</span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="inline-block h-3 w-[2px] bg-white shadow-xs" />
-            <span>Avg. Voter Accuracy</span>
-          </div>
         </div>
       </div>
 
@@ -83,7 +79,6 @@ export default function VoterDistributionChart({
             {/* Stacked Active Outcome Rows */}
             {activeLanes.map((lane) => {
               const sharePct = getSharePct(lane.key);
-              const rmsVal = cohortRms[lane.key] || 0;
               const countVal = cohortCounts[lane.key] || 0;
               const laneVoters = (voterDistribution || []).filter((v) => v.vote_type === lane.key);
 
@@ -153,21 +148,6 @@ export default function VoterDistributionChart({
                       );
                     })}
 
-                    {/* Cohort Average Marker (Solid White Line with Bottom-Right White Callout Text) */}
-                    {countVal > 0 && rmsVal > 0 && (
-                      <div
-                        className="absolute top-0 bottom-0 z-20 pointer-events-none"
-                        style={{ left: `${Math.min(96, Math.max(4, rmsVal))}%` }}
-                        title={`Avg. Accuracy: ${Math.round(rmsVal)}%`}
-                      >
-                        {/* Solid White Line */}
-                        <div className="absolute top-0 bottom-0 -left-[1px] w-[2px] bg-white shadow-md" />
-                        {/* Bottom Right White Text without background */}
-                        <span className="absolute bottom-0.5 left-1 text-white font-mono text-[8.5px] font-bold leading-none select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
-                          {Math.round(rmsVal)}%
-                        </span>
-                      </div>
-                    )}
                   </div>
                 </div>
               );

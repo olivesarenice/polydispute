@@ -1,17 +1,19 @@
-import React, { useState, useMemo } from "react";
-import { 
-  ExternalLink, 
-  Search, 
-  Flame, 
-  ArrowUp, 
-  ArrowDown, 
-  CheckCircle2, 
-  TriangleAlert as AlertTriangle,
+import {
+  ArrowDown,
+  ArrowUp,
+  CheckCircle2,
+  CircleHelp,
   Clock,
-  SlidersHorizontal,
+  ExternalLink,
+  Flame,
   Layers,
-  Users
+  OctagonAlert,
+  Search,
+  SlidersHorizontal,
+  Users,
+  XCircle
 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 // Format helper for timestamps (DD MMM YYYY, HH:mm UTC)
 export function formatUTC(isoString, includeTime = true, shortTime = false) {
@@ -19,23 +21,23 @@ export function formatUTC(isoString, includeTime = true, shortTime = false) {
   try {
     const d = new Date(isoString);
     if (isNaN(d.getTime())) return "—";
-    
+
     const day = String(d.getUTCDate()).padStart(2, "0");
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const month = months[d.getUTCMonth()];
     const year = d.getUTCFullYear();
-    
+
     const hours = String(d.getUTCHours()).padStart(2, "0");
     const minutes = String(d.getUTCMinutes()).padStart(2, "0");
 
     if (shortTime) {
       return `${day} ${month} ${hours}:${minutes}`;
     }
-    
+
     if (!includeTime) {
       return `${day} ${month} ${year}`;
     }
-    
+
     return `${day} ${month} ${year}, ${hours}:${minutes} UTC`;
   } catch (e) {
     return "—";
@@ -51,7 +53,7 @@ export function formatRelativeTime(isoString) {
     const now = new Date();
     const diffMs = now - d;
     if (diffMs < 0) return "Just now";
-    
+
     const diffSec = Math.floor(diffMs / 1000);
     const diffMin = Math.floor(diffSec / 60);
     const diffHours = Math.floor(diffMin / 60);
@@ -72,7 +74,7 @@ export function formatRelativeTime(isoString) {
 // Thinner, sleek Micro SVG Sparkline for live disputes
 function Sparkline({ isLive, currentPrice }) {
   if (!isLive) {
-    return <span className="text-slate-600 font-mono text-[10px] select-none">—</span>;
+    return null;
   }
 
   const base = Math.max(0.05, Math.min(0.95, currentPrice));
@@ -125,14 +127,33 @@ function Sparkline({ isLive, currentPrice }) {
   );
 }
 
+// Smooth continuous color gradient for YES price: 0.0 (red) -> 0.5 (amber) -> 1.0 (emerald green)
+function getPriceGradient(price) {
+  const p = Math.max(0, Math.min(1, typeof price === "number" ? price : parseFloat(price) || 0));
+  let r, g, b;
+  if (p <= 0.5) {
+    const t = p / 0.5;
+    r = Math.round(244 + (245 - 244) * t);
+    g = Math.round(63 + (158 - 63) * t);
+    b = Math.round(94 + (11 - 94) * t);
+  } else {
+    const t = (p - 0.5) / 0.5;
+    r = Math.round(245 + (52 - 245) * t);
+    g = Math.round(158 + (211 - 158) * t);
+    b = Math.round(11 + (153 - 11) * t);
+  }
+  return {
+    text: `rgb(${r}, ${g}, ${b})`,
+    bg: `rgba(${r}, ${g}, ${b}, 0.12)`,
+    border: `rgba(${r}, ${g}, ${b}, 0.28)`,
+  };
+}
+
 // Visual Voter Density Representation (number + visual turnout meter)
 function VoterVisualBadge({ count }) {
   // Turnout gauge scaled to 25 voters max
-  const pct = Math.min(100, Math.max(10, Math.round((count / 25) * 100)));
-  const barColor = 
-    count >= 15 ? "bg-emerald-400" :
-    count >= 7 ? "bg-cyan-400" :
-    count >= 3 ? "bg-cyan-600" : "bg-slate-600";
+  const pct = count > 0 ? Math.min(100, Math.max(8, Math.round((count / 25) * 100))) : 0;
+  const barColor = count > 0 ? "bg-cyan-400" : "bg-slate-700";
 
   return (
     <div className="inline-flex flex-col items-center gap-1 py-0.5">
@@ -141,11 +162,135 @@ function VoterVisualBadge({ count }) {
         <span>{count}</span>
       </div>
       <div className="h-1 w-9 rounded-full bg-slate-800/90 overflow-hidden border border-slate-700/50">
-        <div 
-          className={`h-full rounded-full transition-all duration-300 ${barColor}`} 
-          style={{ width: `${pct}%` }} 
+        <div
+          className={`h-full rounded-full transition-all duration-300 ${barColor}`}
+          style={{ width: `${pct}%` }}
         />
       </div>
+    </div>
+  );
+}
+
+// Status Badge with Color-Coded Icons (CheckCircle2 for YES, XCircle for NO, OctagonAlert for 50-50, CircleHelp for EARLY)
+function StatusBadge({ statusCode, statusLabel, isLive }) {
+  const basePill = "inline-flex items-center gap-1 rounded-md px-2 h-[22px] font-mono text-[10px] font-semibold border leading-none shrink-0";
+
+  if (isLive) {
+    return (
+      <span className={`${basePill} bg-cyan-500/15 font-bold text-cyan-300 border-cyan-500/40`}>
+        <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-ping" />
+        <span>LIVE</span>
+      </span>
+    );
+  }
+  if (statusCode === "RESOLVED_EARLY" || statusCode === "RESOLVED_P4") {
+    return (
+      <span className={`${basePill} bg-purple-500/15 text-purple-300 border-purple-500/30`}>
+        <CircleHelp className="h-3 w-3 text-purple-400 flex-shrink-0" />
+        <span>EARLY</span>
+      </span>
+    );
+  }
+  if (statusCode === "RESOLVED_P2") {
+    return (
+      <span className={`${basePill} bg-emerald-500/15 text-emerald-300 border-emerald-500/30`}>
+        <CheckCircle2 className="h-3 w-3 text-emerald-400 flex-shrink-0" />
+        <span>YES</span>
+      </span>
+    );
+  }
+  if (statusCode === "RESOLVED_P1") {
+    return (
+      <span className={`${basePill} bg-rose-500/15 text-rose-300 border-rose-500/30`}>
+        <XCircle className="h-3 w-3 text-rose-400 flex-shrink-0" />
+        <span>NO</span>
+      </span>
+    );
+  }
+  if (statusCode === "RESOLVED_P3") {
+    return (
+      <span className={`${basePill} bg-amber-500/15 text-amber-300 border-amber-500/30`}>
+        <OctagonAlert className="h-3 w-3 text-amber-400 flex-shrink-0" />
+        <span>50-50</span>
+      </span>
+    );
+  }
+  let fallback = statusLabel || statusCode || "UNKNOWN";
+  if (fallback.includes("TOO EARLY")) fallback = "EARLY";
+  fallback = fallback.replace(/\s*\([Pp][1-4]\)/, "").trim();
+
+  return (
+    <span className={`${basePill} bg-slate-800 text-slate-400 border-slate-700`}>
+      <span>{fallback}</span>
+    </span>
+  );
+}
+
+// Visual Consensus Representation with exact same pill styling as Status + Percentage & Filled Turnout Bar
+function ConsensusVisualBadge({ voteStr }) {
+  const basePill = "inline-flex items-center gap-1 rounded-md px-2 h-[22px] font-mono text-[10px] font-semibold border leading-none shrink-0";
+
+  if (!voteStr || voteStr === "N/A" || voteStr === "—" || voteStr === "NO_VOTES") {
+    return (
+      <div className="inline-flex flex-col items-start gap-1 min-w-[85px] min-h-[38px] justify-center">
+        <span className="inline-flex items-center h-[22px] text-slate-600 font-mono text-xs select-none">—</span>
+        <span className="h-3 block" />
+      </div>
+    );
+  }
+
+  // Parse strings like "YES (91%)", "NO (78%)", "TOO EARLY (65%)", "EARLY (50%)", "50-50 (50%)"
+  const match = voteStr.match(/^([A-Za-z0-9\-\s\/]+?)(?:\s*\((\d+)%\))?$/);
+  let rawLabel = voteStr;
+  let pct = null;
+
+  if (match) {
+    rawLabel = match[1].trim().toUpperCase();
+    if (match[2] !== undefined) {
+      pct = parseInt(match[2], 10);
+    }
+  }
+
+  let cleanLabel = rawLabel;
+  let pillClass = "bg-slate-800 text-slate-400 border-slate-700";
+  let barColor = "bg-slate-500";
+
+  if (rawLabel.includes("YES") || rawLabel === "P2") {
+    cleanLabel = "YES";
+    pillClass = "bg-emerald-500/15 text-emerald-300 border-emerald-500/30";
+    barColor = "bg-emerald-400";
+  } else if (rawLabel.includes("NO") || rawLabel === "P1") {
+    cleanLabel = "NO";
+    pillClass = "bg-rose-500/15 text-rose-300 border-rose-500/30";
+    barColor = "bg-rose-400";
+  } else if (rawLabel.includes("50") || rawLabel.includes("TIE") || rawLabel === "P3") {
+    cleanLabel = "50-50";
+    pillClass = "bg-amber-500/15 text-amber-300 border-amber-500/30";
+    barColor = "bg-amber-400";
+  } else if (rawLabel.includes("EARLY") || rawLabel === "P4") {
+    cleanLabel = "EARLY";
+    pillClass = "bg-purple-500/15 text-purple-300 border-purple-500/30";
+    barColor = "bg-purple-400";
+  }
+
+  return (
+    <div className="inline-flex flex-col items-start gap-1 min-w-[85px] min-h-[38px] justify-center">
+      <span className={`${basePill} ${pillClass}`}>
+        <span>{cleanLabel}</span>
+        {pct !== null && <span className="font-normal opacity-80 text-[10px] ml-0.5">{pct}%</span>}
+      </span>
+      {pct !== null ? (
+        <div className="h-3 flex items-center w-full max-w-[85px]">
+          <div className="h-1 w-full rounded-full bg-slate-800/90 overflow-hidden border border-slate-700/50">
+            <div
+              className={`h-full rounded-full transition-all duration-300 ${barColor}`}
+              style={{ width: `${Math.min(100, Math.max(5, pct))}%` }}
+            />
+          </div>
+        </div>
+      ) : (
+        <span className="h-3 block" />
+      )}
     </div>
   );
 }
@@ -158,10 +303,24 @@ export default function ScreenerTable({
   const [searchQuery, setSearchQuery] = useState("");
   // Default to Live Disputes ONLY
   const [onlyLiveDisputes, setOnlyLiveDisputes] = useState(true);
-  const [minVotersFilter, setMinVotersFilter] = useState(0);
+  const [minVotersFilter, setMinVotersFilter] = useState(10);
   const [sortField, setSortField] = useState("latest_dispute_started");
   const [sortDirection, setSortDirection] = useState("desc");
-  
+  const [hasCheckedLiveFallback, setHasCheckedLiveFallback] = useState(false);
+
+  // Auto-switch default homepage to "All Markets" if live dispute count is zero
+  useEffect(() => {
+    if (!hasCheckedLiveFallback && markets && markets.length > 0) {
+      const activeLiveCount = markets.filter(
+        (m) => m.is_live_dispute && m.total_voters >= minVotersFilter
+      ).length;
+      if (activeLiveCount === 0) {
+        setOnlyLiveDisputes(false);
+      }
+      setHasCheckedLiveFallback(true);
+    }
+  }, [markets, minVotersFilter, hasCheckedLiveFallback]);
+
   // Hover state tracking for popups
   const [hoveredMarketId, setHoveredMarketId] = useState(null);
   const [hoveredDisputeDateId, setHoveredDisputeDateId] = useState(null);
@@ -218,8 +377,12 @@ export default function ScreenerTable({
       });
   }, [markets, searchQuery, onlyLiveDisputes, minVotersFilter, sortField, sortDirection]);
 
-  const liveCount = useMemo(() => markets.filter((m) => m.is_live_dispute).length, [markets]);
-  const totalCount = markets.length;
+  const eligibleMarkets = useMemo(
+    () => markets.filter((m) => m.total_voters >= minVotersFilter),
+    [markets, minVotersFilter]
+  );
+  const liveCount = useMemo(() => eligibleMarkets.filter((m) => m.is_live_dispute).length, [eligibleMarkets]);
+  const totalCount = eligibleMarkets.length;
 
   return (
     <div className="w-full space-y-3 transition-all duration-300">
@@ -231,33 +394,31 @@ export default function ScreenerTable({
           <div className="flex items-center rounded-lg border border-slate-800 bg-[#0d1322] p-1 shadow-inner">
             <button
               onClick={() => setOnlyLiveDisputes(true)}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-semibold transition-all ${
-                onlyLiveDisputes
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-semibold transition-all ${onlyLiveDisputes
                   ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm"
                   : "text-slate-400 hover:text-slate-200"
-              }`}
+                }`}
             >
               <Flame className="h-3.5 w-3.5 text-cyan-400" />
               <span>Live Disputes</span>
-              <span className={`ml-1 rounded-full px-1.5 py-0.2 text-[10px] font-mono ${
-                onlyLiveDisputes ? "bg-cyan-400/20 text-cyan-200" : "bg-slate-800 text-slate-400"
-              }`}>
+              <span className={`ml-1 rounded-full px-1.5 py-0.2 text-[10px] font-mono ${onlyLiveDisputes ? "bg-cyan-400/20 text-cyan-200" : "bg-slate-800 text-slate-400"
+                }`}>
                 {liveCount}
               </span>
             </button>
 
             <button
               onClick={() => setOnlyLiveDisputes(false)}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-semibold transition-all ${
-                !onlyLiveDisputes
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-semibold transition-all ${!onlyLiveDisputes
                   ? "bg-slate-800 text-slate-100 border border-slate-700 shadow-sm"
                   : "text-slate-400 hover:text-slate-200"
-              }`}
+                }`}
             >
               <Layers className="h-3.5 w-3.5 text-slate-400" />
               <span>All Markets</span>
-              <span className="ml-1 rounded-full bg-slate-800 px-1.5 py-0.2 text-[10px] font-mono text-slate-400">
-                {totalCount}
+              <span className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-mono ${!onlyLiveDisputes ? "bg-slate-700/80 text-slate-100 border border-slate-600" : "bg-slate-800 text-slate-400"
+                }`}>
+                {eligibleMarkets.length} of {markets.length.toLocaleString()}
               </span>
             </button>
           </div>
@@ -307,7 +468,18 @@ export default function ScreenerTable({
                 </div>
               </th>
 
-              {/* 2. Status */}
+              {/* 2. YES Price + Thinner Sparkline */}
+              <th
+                onClick={() => handleSort("yes_price")}
+                className="py-2.5 px-4 cursor-pointer hover:text-slate-200 transition-colors min-w-[140px]"
+              >
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-300 font-semibold">YES Price</span>
+                  {sortField === "yes_price" && (sortDirection === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}
+                </div>
+              </th>
+
+              {/* 3. Status */}
               <th
                 onClick={() => handleSort("market_status_code")}
                 className="py-2.5 px-3 cursor-pointer hover:text-slate-200 transition-colors min-w-[110px]"
@@ -318,21 +490,10 @@ export default function ScreenerTable({
                 </div>
               </th>
 
-              {/* 3. YES Price + Thinner Sparkline */}
-              <th
-                onClick={() => handleSort("yes_price")}
-                className="py-2.5 px-4 cursor-pointer hover:text-slate-200 transition-colors min-w-[140px]"
-              >
-                <div className="flex items-center gap-1">
-                  <span className="text-emerald-400 font-semibold">YES Price</span>
-                  {sortField === "yes_price" && (sortDirection === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}
-                </div>
-              </th>
-
               {/* 4. Predominant Vote */}
               <th
                 onClick={() => handleSort("predominant_vote")}
-                className="py-2.5 px-3 cursor-pointer hover:text-slate-200 transition-colors min-w-[130px]"
+                className="py-2.5 px-3 cursor-pointer hover:text-slate-200 transition-colors min-w-[145px]"
               >
                 <div className="flex items-center gap-1">
                   <span>Consensus</span>
@@ -354,22 +515,11 @@ export default function ScreenerTable({
               {/* 6. Dispute Started (Relative time with hover popup) */}
               <th
                 onClick={() => handleSort("latest_dispute_started")}
-                className="py-2.5 px-3 cursor-pointer hover:text-slate-200 transition-colors min-w-[130px]"
-              >
-                <div className="flex items-center gap-1">
-                  <span>Dispute Started</span>
-                  {sortField === "latest_dispute_started" && (sortDirection === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}
-                </div>
-              </th>
-
-              {/* 7. Dedicated Closed Time (with hover popup) */}
-              <th
-                onClick={() => handleSort("market_closed_time")}
                 className="py-2.5 px-4 cursor-pointer hover:text-slate-200 transition-colors min-w-[130px] text-right"
               >
                 <div className="flex items-center justify-end gap-1">
-                  <span>Closed Time</span>
-                  {sortField === "market_closed_time" && (sortDirection === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}
+                  <span>Dispute Started</span>
+                  {sortField === "latest_dispute_started" && (sortDirection === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}
                 </div>
               </th>
             </tr>
@@ -378,7 +528,7 @@ export default function ScreenerTable({
           <tbody className="divide-y divide-slate-800/60 font-sans">
             {filteredMarkets.length === 0 ? (
               <tr>
-                <td colSpan="7" className="py-12 text-center text-slate-500">
+                <td colSpan="6" className="py-12 text-center text-slate-500">
                   {onlyLiveDisputes
                     ? "No live disputes active at this moment. Toggle 'All Markets' to view historical disputes."
                     : "No prediction markets match the selected filter criteria."}
@@ -388,64 +538,24 @@ export default function ScreenerTable({
               filteredMarkets.map((m) => {
                 const isSelected = m.market_id === selectedMarketId;
                 const isLive = m.is_live_dispute;
-
-                let statusBadge;
-                if (isLive) {
-                  statusBadge = (
-                    <span className="inline-flex items-center gap-1 rounded-md bg-cyan-500/15 px-2 py-0.5 font-mono text-[10px] font-bold text-cyan-300 border border-cyan-500/40">
-                      <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-ping"></span>
-                      LIVE
-                    </span>
-                  );
-                } else if (m.market_status_code === "RESOLVED_EARLY") {
-                  statusBadge = (
-                    <span className="inline-flex items-center gap-1 rounded-md bg-purple-500/15 px-2 py-0.5 font-mono text-[10px] font-semibold text-purple-300 border border-purple-500/30">
-                      <AlertTriangle className="h-3 w-3" />
-                      TOO EARLY (P4)
-                    </span>
-                  );
-                } else if (m.market_status_code === "RESOLVED_P2") {
-                  statusBadge = (
-                    <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/15 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-300 border border-emerald-500/30">
-                      <CheckCircle2 className="h-3 w-3" />
-                      RESOLVED (P2)
-                    </span>
-                  );
-                } else if (m.market_status_code === "RESOLVED_P1") {
-                  statusBadge = (
-                    <span className="inline-flex items-center gap-1 rounded-md bg-rose-500/15 px-2 py-0.5 font-mono text-[10px] font-semibold text-rose-300 border border-rose-500/30">
-                      <CheckCircle2 className="h-3 w-3" />
-                      RESOLVED (P1)
-                    </span>
-                  );
-                } else {
-                  statusBadge = (
-                    <span className="inline-flex items-center gap-1 rounded-md bg-slate-800 px-2 py-0.5 font-mono text-[10px] text-slate-400 border border-slate-700">
-                      {m.market_status_label}
-                    </span>
-                  );
-                }
-
-                let predomColor = "text-slate-300";
-                if (m.predominant_vote.includes("YES")) predomColor = "text-emerald-400 font-semibold";
-                else if (m.predominant_vote.includes("NO")) predomColor = "text-rose-400 font-semibold";
-                else if (m.predominant_vote.includes("EARLY")) predomColor = "text-purple-400 font-semibold";
+                const isEarly = m.market_status_code === "RESOLVED_EARLY" ||
+                  m.market_status_code === "RESOLVED_P4" ||
+                  (m.market_status_label && m.market_status_label.toUpperCase().includes("EARLY"));
 
                 return (
                   <tr
                     key={m.market_id}
-                    className={`transition-colors cursor-pointer group/row ${
-                      isSelected
+                    className={`transition-colors cursor-pointer group/row ${isSelected
                         ? "bg-cyan-950/30 border-l-4 border-l-cyan-400"
                         : isLive
-                        ? "bg-cyan-950/20 border-l-4 border-l-cyan-400 hover:bg-cyan-950/35"
-                        : "hover:bg-slate-800/40"
-                    }`}
+                          ? "bg-cyan-950/20 border-l-4 border-l-cyan-400 hover:bg-cyan-950/35"
+                          : "hover:bg-slate-800/40"
+                      }`}
                     onClick={() => onSelectMarket(m.market_id)}
                   >
                     {/* 1. Market Question with Hover Popup for Market ID */}
-                    <td className="py-3 px-4 text-slate-200">
-                      <div 
+                    <td className="py-3 px-4 text-slate-200 align-middle">
+                      <div
                         className="relative flex items-center gap-1.5"
                         onMouseEnter={() => setHoveredMarketId(m.market_id)}
                         onMouseLeave={() => setHoveredMarketId(null)}
@@ -477,32 +587,80 @@ export default function ScreenerTable({
                       </div>
                     </td>
 
-                    {/* 2. Status Badge */}
-                    <td className="py-3 px-3">{statusBadge}</td>
-
-                    {/* 3. YES Price (2 d.p.) + Thinner Sparkline */}
-                    <td className="py-3 px-4">
+                    {/* 2. YES Price (2 d.p.) with continuous 0 (red) -> 1 (green) gradient + Thinner Sparkline */}
+                    <td className="py-3 px-4 align-middle">
                       <div className="flex items-center gap-2.5">
-                        <span className="font-mono font-bold text-sm text-emerald-400 min-w-[42px]">
-                          ${m.yes_price.toFixed(2)}
-                        </span>
+                        {(() => {
+                          const pStyle = getPriceGradient(m.yes_price);
+                          return (
+                            <span
+                              className="inline-flex items-center justify-center rounded px-2 h-[22px] font-mono font-bold text-xs border min-w-[46px] shadow-sm transition-all"
+                              style={{
+                                color: pStyle.text,
+                                backgroundColor: pStyle.bg,
+                                borderColor: pStyle.border,
+                              }}
+                            >
+                              ${(m.yes_price ?? 0).toFixed(2)}
+                            </span>
+                          );
+                        })()}
                         <Sparkline isLive={isLive} currentPrice={m.yes_price} />
                       </div>
                     </td>
 
-                    {/* 4. Predominant Vote / Consensus */}
-                    <td className={`py-3 px-3 font-mono text-xs ${predomColor}`}>
-                      {m.predominant_vote}
+                    {/* 3. Status Badge with Closed Time Subtext */}
+                    <td className="py-3 px-3 align-middle">
+                      <div className="inline-flex flex-col items-start gap-1 min-h-[38px] justify-center">
+                        <StatusBadge
+                          statusCode={m.market_status_code}
+                          statusLabel={m.market_status_label}
+                          isLive={isLive}
+                        />
+
+                        {!isLive ? (
+                          isEarly ? (
+                            <span className="font-mono text-[10px] leading-3 text-slate-500 select-none h-3 flex items-center">-</span>
+                          ) : m.market_closed_time ? (
+                            <div
+                              className="relative inline-block cursor-help h-3 flex items-center"
+                              onMouseEnter={() => setHoveredClosedDateId(m.market_id)}
+                              onMouseLeave={() => setHoveredClosedDateId(null)}
+                            >
+                              <span className="font-mono text-[10px] leading-3 text-slate-400 hover:text-slate-200 transition-colors">
+                                {formatRelativeTime(m.market_closed_time)}
+                              </span>
+
+                              {/* Hover Popup showing exact UTC Timestamp */}
+                              {hoveredClosedDateId === m.market_id && (
+                                <div className="absolute left-0 -top-8 z-30 flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1 text-[11px] font-mono text-cyan-300 shadow-xl whitespace-nowrap pointer-events-none animate-in fade-in duration-150">
+                                  <Clock className="h-3 w-3 text-slate-400" />
+                                  <span>Closed {formatUTC(m.market_closed_time, true, false)}</span>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="h-3 block" />
+                          )
+                        ) : (
+                          <span className="h-3 block" />
+                        )}
+                      </div>
+                    </td>
+
+                    {/* 4. Predominant Vote / Consensus (Icon + Progress Bar) */}
+                    <td className="py-3 px-3 align-middle">
+                      <ConsensusVisualBadge voteStr={m.predominant_vote} />
                     </td>
 
                     {/* 5. Total Voters (Visual Turnout Meter) */}
-                    <td className="py-3 px-3 text-center font-mono">
+                    <td className="py-3 px-3 text-center font-mono align-middle">
                       <VoterVisualBadge count={m.total_voters} />
                     </td>
 
                     {/* 6. Dispute Started (Relative time with Hover Popup) */}
-                    <td className="py-3 px-3 font-mono text-xs text-slate-400">
-                      <div 
+                    <td className="py-3 px-4 text-right font-mono text-xs text-slate-400 align-middle">
+                      <div
                         className="relative inline-block cursor-help"
                         onMouseEnter={() => setHoveredDisputeDateId(m.market_id)}
                         onMouseLeave={() => setHoveredDisputeDateId(null)}
@@ -513,37 +671,12 @@ export default function ScreenerTable({
 
                         {/* Hover Popup showing exact UTC Timestamp */}
                         {hoveredDisputeDateId === m.market_id && m.latest_dispute_started && (
-                          <div className="absolute left-1/2 -translate-x-1/2 -top-8 z-30 flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1 text-[11px] font-mono text-cyan-300 shadow-xl whitespace-nowrap pointer-events-none animate-in fade-in duration-150">
+                          <div className="absolute right-0 -top-8 z-30 flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1 text-[11px] font-mono text-cyan-300 shadow-xl whitespace-nowrap pointer-events-none animate-in fade-in duration-150">
                             <Clock className="h-3 w-3 text-slate-400" />
                             <span>{formatUTC(m.latest_dispute_started, true, false)}</span>
                           </div>
                         )}
                       </div>
-                    </td>
-
-                    {/* 7. Dedicated Closed Time (with Hover Popup) */}
-                    <td className="py-3 px-4 text-right font-mono text-xs text-slate-400">
-                      {m.market_closed_time ? (
-                        <div 
-                          className="relative inline-block cursor-help"
-                          onMouseEnter={() => setHoveredClosedDateId(m.market_id)}
-                          onMouseLeave={() => setHoveredClosedDateId(null)}
-                        >
-                          <span className="hover:text-slate-200 transition-colors">
-                            {formatRelativeTime(m.market_closed_time)}
-                          </span>
-
-                          {/* Hover Popup showing exact Closed UTC Timestamp */}
-                          {hoveredClosedDateId === m.market_id && (
-                            <div className="absolute right-0 -top-8 z-30 flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1 text-[11px] font-mono text-purple-300 shadow-xl whitespace-nowrap pointer-events-none animate-in fade-in duration-150">
-                              <Clock className="h-3 w-3 text-slate-400" />
-                              <span>{formatUTC(m.market_closed_time, true, false)}</span>
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-slate-600">—</span>
-                      )}
                     </td>
                   </tr>
                 );
