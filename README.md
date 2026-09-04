@@ -1,80 +1,134 @@
-# polydispute
+# Polydispute Web Application & Analytical Engine
 
-Polydispute prediction market dispute analytics & resolution data pipeline. Ingests Discord dispute discussions, Polymarket market metadata, UMA Rocks committee signals, and CLOB 1-minute midpoint price histories into MotherDuck.
-
----
-
-## Overview
-
-The pipeline runs four sequential data operations via a unified CLI orchestrator:
-
-1. **Phase 1: Discord Disputes** — Scrapes UMA `#disputes` threads/messages bounded strictly by UTC 00:00 calendar date range (or rolling last 24h), ingesting raw data into MotherDuck and extracting 6-8 digit `market_id` foreign keys to produce `clean_dc_threads`.
-2. **Phase 2: Polymarket Catalog** — State-driven ingestion of Polymarket Gamma API metadata for active/disputed market IDs linked from Discord threads.
-3. **Phase 3: UMA Rocks Signals** — State-driven incremental ingestion of UMA DVM committee consensus stances (`P1`-`P4`) from UMA Rocks API (`getPoolAnswers`).
-4. **Phase 4: CLOB Price History** — High-resolution (1-min) midpoint price time-series pulled in parallel from Polymarket CLOB API and staged as ZSTD Parquet.
+This repository contains the unified web application and analytical backend for the Polydispute prediction market dispute resolution engine. It combines a high-performance **FastAPI** analytical API querying **MotherDuck** with a modern **React 18** Single-Page Application (SPA) designed to surface governance edge, voter credibility calibration, and dispute outcome projections.
 
 ---
 
-## Incremental Pipeline Execution
+## 1. Developer Onboarding & Configuration Setup
 
-Run the complete pipeline sequence for daily/weekly incremental updates:
+### Configuration Architecture
+- **Secrets Management**: Environment variables and credentials are centrally managed in **Doppler** (`polydispute` project). Secrets are never committed to Git or stored in static plaintext `.env` files.
+- **Local Dev Sync**: Uses `direnv` combined with `doppler` CLI. When working locally, secrets are injected dynamically into RAM at runtime via `doppler run --`.
+- **Production Containerization**: Deployed on Hetzner via **Coolify** using Docker Compose. Container execution is wrapped at boot via `ENTRYPOINT ["doppler", "run", "--"]` matching the pipeline worker pattern.
+
+### First-Time Dev Setup CLI Steps
 
 ```bash
-# 1. Phase 1: Discord Disputes
-# Mode A (Auto-Range): Rolling last 24 hours (-1 day) from current execution time if --t0/--t1 omitted
-uv run python pipeline/src/run_pipelines.py --phase 1 --op all
+# 1. Install required CLI tooling via Homebrew
+brew install uv node dopplerhq/cli/doppler direnv
 
-# Mode B (Explicit Date Range): Strict 00:00 UTC calendar date bounds (e.g., 2026-08-12T00:00:00Z -> 2026-08-13T00:00:00Z)
-uv run python pipeline/src/run_pipelines.py --phase 1 --op all --t0 2026-08-12 --t1 2026-08-13
+# 2. Authenticate with Doppler and link project configuration
+doppler login
+doppler setup --project polydispute --config dev
 
-# 2. Phase 2: Polymarket Catalog Metadata (State-driven)
-uv run python pipeline/src/run_pipelines.py --phase 2 --op all
+# 3. Install Python backend and Node frontend dependencies
+uv sync
+cd frontend && npm install && cd ..
 
-# 3. Phase 3: UMA Rocks Committee Signals (State-driven)
-uv run python pipeline/src/run_pipelines.py --phase 3 --op all
+# 4. Launch development services (in separate terminals)
 
-# 4. Phase 4: CLOB Price History (State-driven, 16 parallel threads)
-uv run python pipeline/src/run_pipelines.py --phase 4 --op all --targets unresolved --threads 16
+# Terminal A: FastAPI Analytical Backend (Port 8000 with auto-reload)
+doppler run -- uvicorn backend.src.app:app --host 0.0.0.0 --port 8000 --reload
+
+# Terminal B: React 18 / Vite Development Server (Port 5173 with HMR)
+cd frontend && npm run dev
 ```
 
 ---
 
-## Project Structure
+## 2. Application Architecture & Serving Layout
+
+The production build runs as a **single-container monolith**: FastAPI serves all `/api/*` data routes and directly delivers the compiled React production bundle (`frontend/dist`) for root and SPA client-side routes without requiring a separate Node.js server or Nginx container.
 
 ```
-pipeline/
-├── data/
-│   └── raw/                      # Stage-isolated raw data outputs
-│       ├── discord/              # output_<unix>.json
-│       ├── polymarket/           # output_<unix>.json
-│       ├── umarocks/             # output_<unix>.json
-│       └── price_history/        # output_<unix>.parquet
-└── src/
-    ├── run_pipelines.py          # Unified CLI orchestrator
-    ├── db_schema.py              # MotherDuck database table definitions
-    ├── db_utils.py               # Database connections & bulk load utilities
-    ├── db_init.py                # Schema initialization script
-    ├── config.py                 # Environment configuration
-    ├── connectors/               # API clients (Discord, Polymarket, UMA Rocks)
-    ├── pipes/                    # Pipe modules (Phase 1-4 pull/load scripts)
-    │   ├── discord/              # pull.py, load.py
-    │   ├── polymarket/           # pull.py, load.py
-    │   ├── umarocks/             # pull.py, load.py
-    │   └── price_history/        # pull.py, load.py
-    └── utils/                    # Shared time utilities
+polydispute/
+├── Dockerfile                  # Multi-stage: Node 20 builder -> Python 3.12 runtime (~220 MB)
+├── docker-compose.yml          # Coolify service specification (Port 8000, Doppler injection)
+├── pyproject.toml              # Lean web runtime dependencies (duckdb, fastapi, sentry-sdk, etc.)
+├── uv.lock                     # Deterministic dependency lockfile
+├── backend/                    # Python FastAPI analytical engine
+│   └── src/
+│       ├── app.py              # API routes, Sentry APM tracing, SPA static mount
+│       ├── config.py           # Pydantic Settings & MotherDuck database resolution
+│       ├── db.py               # Thread-safe MotherDuck connection pool & healthchecks
+│       ├── analytics.py        # Empirical Bayes voter calibration & quadratic consensus models
+│       └── schemas.py          # Strict Pydantic response validation models
+└── frontend/                   # React 18 / Tailwind CSS client application
+    ├── src/
+    │   ├── App.jsx             # Top-level state controller & telemetry status gate
+    │   ├── components/         # Modular dashboard panels (Screener, Replay, Logos)
+    │   ├── lib/api.js          # Resilient MotherDuck API client with retry logic
+    │   └── index.css           # Curated dark-mode design system
+    ├── public/                 # Static vector assets & Scales of Themis favicon.svg
+    └── dist/                   # Compiled production bundle output from Vite
 ```
 
 ---
 
-## CLI Options
+## 3. Containerization & Coolify Deployment
 
-| Arg | Required | Description |
-|-----|----------|-------------|
-| `--phase` | Yes | Phase number: `1` (Discord), `2` (Polymarket), `3` (UMA Rocks), `4` (Price History) |
-| `--op` | No | Operation to run: `pull`, `load`, or `all` (default: `all`) |
-| `--t0` | Optional | Start date (YYYY-MM-DD parses to 00:00 UTC); defaults to rolling 24h ago if omitted |
-| `--t1` | Optional | End date (YYYY-MM-DD parses to 00:00 UTC); defaults to now UTC if omitted |
-| `--limit` | No | Maximum market batch size for Phase 4 price history (default: None, unlimited) |
-| `--targets` | No | Target filter: `unresolved` (default) or `all` (full backfill) |
-| `--fidelity` | No | CLOB price history sampling resolution in minutes (default: `1`) |
-| `--threads` | No | Number of parallel worker threads for price history pulling (default: `8`) |
+### Multi-Stage Build Pipeline
+1. **Stage 1 (`frontend-builder`)**: Uses `node:20-alpine` to execute `npm ci` and `npm run build`, outputting minified static assets to `/build/dist`.
+2. **Stage 2 (`runtime`)**: Uses `python:3.12-slim`, installs `doppler` CLI and `curl`, runs `uv sync --frozen --no-dev` using BuildKit caching, and copies `frontend/dist` into the web root.
+
+### Docker Compose Orchestration
+The application is declared in [`docker-compose.yml`](docker-compose.yml) and deployed via Coolify:
+
+```yaml
+services:
+  polydispute:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: polydispute-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DOPPLER_TOKEN=${DOPPLER_TOKEN}
+      - DOPPLER_CONFIG=${DOPPLER_CONFIG:-prd}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+```
+
+### Coolify Quick Deploy Steps
+1. Navigate to your Coolify dashboard $\rightarrow$ **+ New Resource** $\rightarrow$ **Git Repository**.
+2. Set **Build Pack** to `Docker Compose` and specify `/docker-compose.yml`.
+3. In **Environment Variables** (or Shared Project Variables), set `DOPPLER_TOKEN`.
+4. Bind your public domain (e.g. `https://polydispute.yourdomain.com`). Traefik routes public HTTPS directly to container port `8000`.
+5. Click **Deploy**.
+
+---
+
+## 4. Core Analytical Models & API Endpoints
+
+### Empirical Bayes Voter Scoring
+The analytical engine scores community forecasters using an Empirical Bayes shrinkage model to mitigate small-sample noise:
+
+$$S_u = \frac{R_u + N \cdot P}{G_u + N}$$
+
+- $R_u$: Lifetime correct consensus predictions
+- $G_u$: Lifetime participated dispute votes
+- $N$: Prior pseudo-votes trust parameter (default: 20)
+- $P$: Prior baseline accuracy (default: 50.0%)
+
+Consensus projection applies quadratic power weighting ($W_u = S_u^2$) to map forecaster signals ($P1=\$0.00, P2=\$1.00, P3=\$0.50, P4=P(t)$) into point-in-time expected resolution prices.
+
+### API Reference
+
+| Endpoint | Method | Description | Cache TTL |
+|---|---|---|---|
+| `/api/health` | `GET` | MotherDuck connectivity ping, query latency (ms), and memory cache status | None (Live) |
+| `/api/markets` | `GET` | Filterable screener catalog of disputed prediction markets with consensus metrics | 60s |
+| `/api/markets/{id}/detail` | `GET` | Deep-dive analytics, 1-min CLOB price trajectory, voter breakdown, consensus replay | 30s |
+| `/api/leaderboard` | `GET` | Forecaster rankings, Bayesian accuracy scores, and lifetime accuracy statistics | 120s |
+| `/api/pipeline/status` | `GET` | Pipeline synchronization watermarks and fresh database timestamps | 60s |
+
+### Observability & APM Tracing
+- **Sentry APM**: Automatic transaction tracing for all API routes (`traces_sample_rate=1.0`).
+- **Proxy Client IP Resolution**: Inspects `CF-Connecting-IP`, `X-Forwarded-For`, and `X-Real-IP` to extract real origin IPs behind Coolify / Traefik.
+- **Microsecond Latency Headers**: Injects `X-Process-Time: {ms}` into all HTTP responses.

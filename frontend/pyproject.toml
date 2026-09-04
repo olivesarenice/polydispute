@@ -1,0 +1,15 @@
+[project]
+name = "polydispute-frontend"
+version = "0.1.0"
+description = "Streamlit devtool frontend for Polydispute"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "altair>=5.0.0",
+    "duckdb==1.5.4",
+    "loguru>=0.7.3",
+    "matplotlib>=3.8.0",
+    "pandas>=2.2.0",
+    "pyarrow>=15.0.0",
+    "streamlit>=1.42.0",
+]

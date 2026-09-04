@@ -1,0 +1,23 @@
+services:
+  polydispute:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: polydispute-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DOPPLER_TOKEN=${DOPPLER_TOKEN}
+      - DOPPLER_CONFIG=${DOPPLER_CONFIG:-prd}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
