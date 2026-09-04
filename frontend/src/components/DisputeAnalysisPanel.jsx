@@ -17,7 +17,8 @@ import {
   ArrowLeft,
   Radar,
   TrendingUp,
-  Scale
+  Scale,
+  TriangleAlert as AlertTriangle
 } from "lucide-react";
 import ConsensusReplayPanel from "./ConsensusReplayPanel";
 import { formatUTC } from "./ScreenerTable";
