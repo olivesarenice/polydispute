@@ -3,8 +3,8 @@ services:
     image: ghcr.io/olivesarenice/polydispute-app:latest
     container_name: polydispute-app
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
       - DOPPLER_TOKEN=${DOPPLER_TOKEN}
       - DOPPLER_CONFIG=${DOPPLER_CONFIG:-prd}
