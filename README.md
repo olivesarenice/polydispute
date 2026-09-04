@@ -1,6 +1,32 @@
 # polydispute
 
-Polydispute prediction market dispute analytics & resolution data pipeline. Ingests Discord dispute discussions, Polymarket market metadata, UMA Rocks committee signals, and CLOB 1-minute midpoint price histories into MotherDuck.
+Polydispute prediction market dispute analytics engine & resolution platform. It combines an automated ELT pipeline ingesting Discord dispute discussions, Polymarket market metadata, UMA Rocks committee signals, and CLOB price histories into MotherDuck, with a production FastAPI backend serving analytical endpoints and a React 18 SPA.
+
+---
+
+## Deployment & Running
+
+### Coolify (Docker Compose)
+The application is pre-configured for one-click deployment on **Coolify** using Docker Compose.
+
+1. **Docker Compose Configuration**: [`docker-compose.yml`](docker-compose.yml) defines the `polydispute` web service exposing port `8000` with automated healthchecks (`/api/health`).
+2. **Multi-Stage Build**: [`Dockerfile`](Dockerfile) compiles the React SPA via Node 20 and packages the lightweight Python 3.12 FastAPI analytical backend (~220 MB).
+3. **Secrets Management**: Secrets are centrally managed via Doppler (or Coolify environment variables). If `DOPPLER_TOKEN` is set, `entrypoint.sh` automatically wraps startup with `doppler run --`.
+
+Detailed deployment runbook: see [`docs/deployment_coolify.md`](docs/deployment_coolify.md).
+
+### Local Quickstart
+```bash
+# 1. Install backend and frontend dependencies
+uv sync
+cd frontend && npm install && cd ..
+
+# 2. Start backend API (via Doppler or ambient environment)
+doppler run -- uvicorn backend.src.app:app --host 0.0.0.0 --port 8000 --reload
+
+# 3. Start frontend dev server
+cd frontend && npm run dev
+```
 
 ---
 

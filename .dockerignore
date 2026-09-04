@@ -1,0 +1,53 @@
+# Version control
+.git
+.gitignore
+
+# Python virtual environments & caches
+.venv
+venv
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.uv_cache/
+
+# Node / Frontend artifacts (let Docker multi-stage build compile cleanly)
+**/node_modules/
+frontend/node_modules/
+frontend/dist/
+.npm/
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+.envrc
+
+# Pipeline and local data stores
+pipeline/
+data/
+*.parquet
+*.duckdb
+*.db
+*.zip
+clean_pm_markets
+
+# IDE and OS metadata
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Documentation and temporary notes
+docs/
+reference/
