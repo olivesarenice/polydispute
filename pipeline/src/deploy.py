@@ -14,6 +14,11 @@ def parse_args() -> argparse.Namespace:
         default="dev",
         help="Deployment target: local (polydispute-worker:local on polydispute-local) or dev (ghcr.io image on polydispute-dev)",
     )
+    parser.add_argument(
+        "--cron",
+        default="*/5 * * * *",
+        help="Cron schedule expression (default: '*/5 * * * *' for every 5 minutes)",
+    )
     return parser.parse_args()
 
 
@@ -47,7 +52,7 @@ if __name__ == "__main__":
         deployment_name = "polydispute-pipeline-dev"
 
         print(
-            f"Connecting to Prefect Server and registering [{deployment_name}] on process pool [{pool_name}] via GitHub storage..."
+            f"Connecting to Prefect Server and registering [{deployment_name}] on process pool [{pool_name}] via GitHub storage with cron [{args.cron}]..."
         )
 
         from prefect import flow
@@ -58,7 +63,7 @@ if __name__ == "__main__":
         ).deploy(
             name=deployment_name,
             work_pool_name=pool_name,
-            cron="0 * * * *",
+            cron=args.cron,
         )
 
     print(f"✅ Deployment [{deployment_name}] successfully registered!")

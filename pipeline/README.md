@@ -32,7 +32,7 @@ direnv allow
 # 5. Provision the local Prefect work pool and start worker
 ./setup_pool.sh
 
-# 6. Register pipeline deployments to the Prefect server
+# 6. Register pipeline deployments to the Prefect server (runs every 5 minutes by default)
 uv run python src/deploy.py
 ```
 
