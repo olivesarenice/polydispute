@@ -807,6 +807,11 @@ def get_market_detail(
 @app.get("/api/markets/{market_id}/price-history", response_model=list[PricePoint])
 def get_price_history(market_id: str) -> list[PricePoint]:
     """Retrieve price history series filtered to price changes and boundary anchors."""
+    cache_key = f"price_history_{market_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     sql = f"""
     WITH ranked AS (
         SELECT 
@@ -827,13 +832,15 @@ def get_price_history(market_id: str) -> list[PricePoint]:
     ORDER BY observed_at ASC;
     """
     df = db_manager.query_df(sql)
-    return [
+    points = [
         PricePoint(
             timestamp=str(r["timestamp"]),
             yes_price=round(float(r["yes_price"]), 4),
         )
         for _, r in df.iterrows()
     ]
+    cache.set(cache_key, points, settings.PRICE_HISTORY_CACHE_TTL_SEC)
+    return points
 
 
 def compute_discord_group_accuracy(

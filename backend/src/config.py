@@ -78,14 +78,14 @@ class Settings(BaseSettings):
         description="Maximum backoff ceiling for retries (seconds)",
     )
 
-    # In-Memory Cache TTLs (seconds)
+    # In-Memory Cache TTLs (seconds) - 5 minutes aligned with pipeline refresh
     SCREENER_CACHE_TTL_SEC: int = Field(
-        default=60,
+        default=300,
         ge=5,
         description="Screener markets catalog cache TTL (seconds)",
     )
     LIVE_DETAIL_CACHE_TTL_SEC: int = Field(
-        default=30,
+        default=300,
         ge=5,
         description="Live active dispute market detail cache TTL (seconds)",
     )
@@ -100,9 +100,14 @@ class Settings(BaseSettings):
         description="Voter calibration leaderboard cache TTL (seconds)",
     )
     PIPELINE_STATUS_CACHE_TTL_SEC: int = Field(
-        default=30,
+        default=300,
         ge=5,
         description="Pipeline execution status history cache TTL (seconds)",
+    )
+    PRICE_HISTORY_CACHE_TTL_SEC: int = Field(
+        default=300,
+        ge=5,
+        description="Market price history series cache TTL (seconds)",
     )
 
     # Analytical & Bayesian Calibration Defaults

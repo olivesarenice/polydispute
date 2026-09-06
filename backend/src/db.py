@@ -13,6 +13,7 @@ from typing import Any
 
 import duckdb
 import pandas as pd
+import sentry_sdk
 from loguru import logger
 from tenacity import (
     retry,
@@ -82,44 +83,57 @@ class MotherDuckManager:
     def health_check(self) -> dict[str, Any]:
         """Ping database with 'SELECT 1' and measure latency in milliseconds."""
         t0 = time.perf_counter()
-        try:
-            conn = self.get_connection()
-            with self._lock:
-                cursor = conn.cursor()
-                res = cursor.execute("SELECT 1").fetchone()
-                cursor.close()
+        with sentry_sdk.start_span(op="db.ping", description="SELECT 1") as span:
+            span.set_data("db.system", "motherduck")
+            span.set_data("db.name", settings.target_database)
+            span.set_data("db.statement", "SELECT 1")
+            try:
+                conn = self.get_connection()
+                with self._lock:
+                    cursor = conn.cursor()
+                    res = cursor.execute("SELECT 1").fetchone()
+                    cursor.close()
 
-            latency = round((time.perf_counter() - t0) * 1000.0, 2)
-            self._last_ping_latency_ms = latency
+                latency = round((time.perf_counter() - t0) * 1000.0, 2)
+                self._last_ping_latency_ms = latency
+                span.set_data("db.response_time_ms", latency)
+                sentry_sdk.set_measurement("db_ping_latency_ms", latency, "millisecond")
 
-            if res and res[0] == 1:
+                if res and res[0] == 1:
+                    return {
+                        "database": "connected",
+                        "database_target": f"md:{settings.target_database}",
+                        "latency_ms": latency,
+                        "error": None,
+                    }
+                span.set_status("unknown_error")
                 return {
-                    "database": "connected",
+                    "database": "unreachable",
                     "database_target": f"md:{settings.target_database}",
                     "latency_ms": latency,
-                    "error": None,
+                    "error": "Unexpected ping response",
                 }
-            return {
-                "database": "unreachable",
-                "database_target": f"md:{settings.target_database}",
-                "latency_ms": latency,
-                "error": "Unexpected ping response",
-            }
-        except Exception as e:
-            latency = round((time.perf_counter() - t0) * 1000.0, 2)
-            logger.warning(f"MotherDuck health check ping failed: {e}")
-            return {
-                "database": "unreachable",
-                "database_target": f"md:{settings.target_database}",
-                "latency_ms": latency,
-                "error": str(e),
-            }
+            except Exception as e:
+                latency = round((time.perf_counter() - t0) * 1000.0, 2)
+                span.set_status("internal_error")
+                span.set_data("error", str(e))
+                span.set_data("db.response_time_ms", latency)
+                sentry_sdk.set_measurement("db_ping_latency_ms", latency, "millisecond")
+                logger.warning(f"MotherDuck health check ping failed: {e}")
+                return {
+                    "database": "unreachable",
+                    "database_target": f"md:{settings.target_database}",
+                    "latency_ms": latency,
+                    "error": str(e),
+                }
 
     def query_df(self, sql: str) -> pd.DataFrame:
         """
         Execute an analytical SQL query and return results as a Pandas DataFrame.
-        Includes automatic retries on transient connection exceptions.
+        Includes automatic retries on transient connection exceptions and Sentry tracing.
         """
+        span_desc = sql.strip().splitlines()[0][:100] if sql.strip() else "SQL Query"
+
         @retry(
             retry=retry_if_exception_type((duckdb.ConnectionException, duckdb.IOException, TimeoutError)),
             stop=stop_after_attempt(settings.DB_MAX_RETRIES),
@@ -130,17 +144,38 @@ class MotherDuckManager:
             reraise=True,
         )
         def _execute_with_retry() -> pd.DataFrame:
-            try:
-                conn = self.get_connection()
-                with self._lock:
-                    cursor = conn.cursor()
-                    df = cursor.execute(sql).df()
-                    cursor.close()
+            t0 = time.perf_counter()
+            with sentry_sdk.start_span(op="db.query", description=span_desc) as span:
+                span.set_data("db.system", "motherduck")
+                span.set_data("db.name", settings.target_database)
+                span.set_data("db.statement", sql)
+                try:
+                    conn = self.get_connection()
+                    with self._lock:
+                        cursor = conn.cursor()
+                        df = cursor.execute(sql).df()
+                        cursor.close()
+
+                    duration_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+                    span.set_data("db.row_count", len(df))
+                    span.set_data("db.response_time_ms", duration_ms)
+                    sentry_sdk.set_measurement("motherduck_query_duration_ms", duration_ms, "millisecond")
+                    logger.debug(f"MotherDuck query finished in {duration_ms}ms (rows={len(df)}): {span_desc}")
                     return df
-            except (duckdb.ConnectionException, duckdb.IOException) as conn_err:
-                logger.warning(f"Connection dropped during query ({conn_err}). Reconnecting...")
-                self.reconnect()
-                raise
+                except (duckdb.ConnectionException, duckdb.IOException) as conn_err:
+                    duration_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+                    span.set_status("unavailable")
+                    span.set_data("db.response_time_ms", duration_ms)
+                    span.set_data("error", str(conn_err))
+                    logger.warning(f"Connection dropped during query ({conn_err}). Reconnecting...")
+                    self.reconnect()
+                    raise
+                except Exception as exc:
+                    duration_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+                    span.set_status("internal_error")
+                    span.set_data("db.response_time_ms", duration_ms)
+                    span.set_data("error", str(exc))
+                    raise
 
         return _execute_with_retry()
 
