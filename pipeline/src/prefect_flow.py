@@ -24,7 +24,7 @@ def run_discord_stage(t0: str | None = None, t1: str | None = None):
     window = TimeWindow(t0=t0_val, t1=t1_val, run_id=run_id)
     
     pull_discord_stage(window)
-    load_discord_stage()
+    load_discord_stage(window)
     logger.info("Discord stage completed.")
 
 

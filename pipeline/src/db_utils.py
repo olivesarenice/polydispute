@@ -47,10 +47,12 @@ def load_json_to_table(
     run_id: Optional[str] = None,
     conn: Optional[duckdb.DuckDBPyConnection] = None,
     on_conflict: str = "update",
+    only_diff: bool = True,
 ) -> None:
     """
     Bulk load a list of dictionaries into a MotherDuck / DuckDB table.
     - on_conflict="update": Enforces ON CONFLICT ({pk}) DO UPDATE SET
+      - only_diff=True: Skips updating rows where business columns are unchanged (WHERE col IS DISTINCT FROM EXCLUDED.col)
     - on_conflict="ignore": Enforces ON CONFLICT ({pk}) DO NOTHING (append-only ignore existing)
     Automatically populates DW lineage columns (_source_table, _source_run_id, _run_created_at).
     """
@@ -89,11 +91,11 @@ def load_json_to_table(
 
     columns = list(cleaned_records[0].keys())
     pk_cols = [p.strip() for p in pk.split(",")]
-    pk_str = ", ".join(pk_cols)
+    pk_str = ", ".join([f'"{p}"' for p in pk_cols])
 
     if on_conflict.lower() == "ignore":
         upsert_sql = f"""
-            INSERT INTO {table}
+            INSERT INTO "{table}"
             BY NAME
             SELECT * FROM arrow_table
             ON CONFLICT ({pk_str}) DO NOTHING
@@ -103,21 +105,31 @@ def load_json_to_table(
         update_cols = [
             c for c in columns if c not in pk_cols and not c.startswith("_created")
         ]
-        update_assignments = [f"{c} = EXCLUDED.{c}" for c in update_cols]
-        update_assignments.append("_updated_at = now()")
+        update_assignments = [f'"{c}" = EXCLUDED."{c}"' for c in update_cols]
+        update_assignments.append('_updated_at = now()')
         update_str = ", ".join(update_assignments)
 
+        # Optimization: Only update row micro-partitions if non-audit business columns actually changed
+        diff_cols = [c for c in update_cols if not c.startswith("_")]
+        if only_diff and diff_cols:
+            where_conditions = " OR ".join(
+                [f'"{table}"."{c}" IS DISTINCT FROM EXCLUDED."{c}"' for c in diff_cols]
+            )
+            where_clause = f"\n            WHERE {where_conditions}"
+        else:
+            where_clause = ""
+
         upsert_sql = f"""
-            INSERT INTO {table}
+            INSERT INTO "{table}"
             BY NAME
             SELECT * FROM arrow_table
             ON CONFLICT ({pk_str}) DO UPDATE SET
-                {update_str}
+                {update_str}{where_clause}
         """
 
     try:
         conn.execute(upsert_sql)
-        logger.debug(f"Successfully loaded {len(records)} records into {table} (on_conflict={on_conflict})")
+        logger.debug(f"Successfully loaded {len(records)} records into {table} (on_conflict={on_conflict}, only_diff={only_diff})")
     except Exception as e:
         logger.error(f"Failed to bulk upsert into {table}: {e}")
         raise

@@ -76,20 +76,22 @@ def main() -> int:
 
         match phase:
             case "1_discord":
+                run_id = f"pipe_dc_{run_timestamp}"
+                if not args.t0 or not args.t1:
+                    t1_val = args.t1 or now.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    t0_val = args.t0 or (now - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                else:
+                    t0_val, t1_val = args.t0, args.t1
+
+                window = TimeWindow(t0=t0_val, t1=t1_val, run_id=run_id)
+
                 if do_pull:
                     if not args.t0 or not args.t1:
                         logger.info("Discord pull requested without --t0/--t1 dates. Defaulting to last 1 day.")
-                        t1_val = args.t1 or now.strftime("%Y-%m-%dT%H:%M:%SZ")
-                        t0_val = args.t0 or (now - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-                    else:
-                        t0_val, t1_val = args.t0, args.t1
-
-                    run_id = f"pipe_dc_{run_timestamp}"
-                    window = TimeWindow(t0=t0_val, t1=t1_val, run_id=run_id)
                     pull_discord_stage(window)
 
                 if do_load:
-                    load_discord_stage()
+                    load_discord_stage(window if do_pull else None)
 
             case "2_polymarket":
                 run_id = f"pipe_pm_{run_timestamp}"

@@ -48,36 +48,90 @@ def load_polymarket_stage(window: Optional[TimeWindow | int] = None) -> None:
     logger.success(f"Phase 0 Load Complete for runtime_unix={runtime_unix}")
 
 
-def clean_polymarket_stage(run_id: Optional[str] = None) -> None:
+def clean_polymarket_stage(
+    run_id: Optional[str] = None,
+    full_refresh: bool = False,
+) -> None:
     """
     Phase 0 Clean: Transforms raw_pm_markets into Silver clean_pm_markets.
     Parses stringified JSON arrays (outcome_prices, clob_token_ids) into typed columns.
+
+    Incremental optimization:
+    - If run_id is supplied and not full_refresh, only transforms markets that:
+      1) were touched in the current pipeline run (_source_run_id = run_id)
+      2) were updated within the last 30 minutes
+      3) are missing from clean_pm_markets
+    - Otherwise processes all rows (full refresh fallback).
     """
     logger.info("Phase 0 Clean: Transforming raw_pm_markets into clean_pm_markets...")
     conn = get_db_conn()
 
-    query = """
-    SELECT 
-        id AS market_id,
-        question,
-        description,
-        condition_id,
-        slug,
-        resolution_source,
-        closed,
-        active,
-        category,
-        outcome_prices,
-        clob_token_ids,
-        start_date,
-        end_date,
-        closed_time,
-        uma_end_date,
-        uma_resolution_status,
-        uma_question_id,
-        resolved_by
-    FROM raw_pm_markets
+    # Check if clean_pm_markets exists to safely execute incremental LEFT JOIN
+    table_exists = False
+    try:
+        res = conn.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_name = 'clean_pm_markets'"
+        ).fetchone()
+        table_exists = res is not None
+    except Exception:
+        table_exists = False
+
+    base_cols = """
+        r.id AS market_id,
+        r.question,
+        r.description,
+        r.condition_id,
+        r.slug,
+        r.resolution_source,
+        r.closed,
+        r.active,
+        r.category,
+        r.outcome_prices,
+        r.clob_token_ids,
+        r.start_date,
+        r.end_date,
+        r.closed_time,
+        r.uma_end_date,
+        r.uma_resolution_status,
+        r.uma_question_id,
+        r.resolved_by
     """
+
+    if not full_refresh and run_id and table_exists:
+        query = f"""
+        SELECT {base_cols}
+        FROM raw_pm_markets r
+        LEFT JOIN clean_pm_markets c ON r.id = c.market_id
+        WHERE c.market_id IS NULL
+           OR r._source_run_id = '{run_id}'
+           OR r._updated_at >= now() - INTERVAL '30 minutes'
+        """
+        logger.info(f"Phase 0 Clean: Performing incremental transform for run_id={run_id}...")
+    else:
+        query = """
+        SELECT 
+            id AS market_id,
+            question,
+            description,
+            condition_id,
+            slug,
+            resolution_source,
+            closed,
+            active,
+            category,
+            outcome_prices,
+            clob_token_ids,
+            start_date,
+            end_date,
+            closed_time,
+            uma_end_date,
+            uma_resolution_status,
+            uma_question_id,
+            resolved_by
+        FROM raw_pm_markets
+        """
+        logger.info("Phase 0 Clean: Performing full catalog transform on raw_pm_markets...")
+
     df = conn.execute(query).pl()
     conn.close()
 
@@ -115,5 +169,7 @@ def clean_polymarket_stage(run_id: Optional[str] = None) -> None:
         records = df_clean.to_dicts()
         load_json_to_table("clean_pm_markets", records, pk="market_id", run_id=run_id)
         logger.info(f"Loaded {len(records)} records into clean_pm_markets")
+    else:
+        logger.info("Phase 0 Clean: No new or modified markets to transform.")
 
     logger.success("Phase 0 Clean Complete.")
